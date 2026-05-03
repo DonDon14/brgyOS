@@ -31,6 +31,7 @@ barangayFilter.addEventListener("change", loadRequests);
 exportBtn.addEventListener("click", downloadCsv);
 backupBtn.addEventListener("click", downloadBackup);
 closeModalBtn.addEventListener("click", () => requestModal.close());
+wireNavLinks();
 
 function getAdminKey() {
   return localStorage.getItem("brgyos_admin_key") || "";
@@ -210,6 +211,21 @@ async function loadBarangays() {
 async function init() {
   await loadBarangays();
   await loadRequests();
+}
+
+function wireNavLinks() {
+  document.querySelectorAll(".nav-link[href^='#']").forEach((link) => {
+    const target = document.querySelector(link.getAttribute("href"));
+    if (!target) {
+      link.classList.add("disabled");
+      link.addEventListener("click", (e) => e.preventDefault());
+      return;
+    }
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
 }
 
 init();

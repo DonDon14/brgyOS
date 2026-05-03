@@ -12,6 +12,7 @@ saveKeyBtn.addEventListener("click", () => {
   msg.textContent = "Owner key saved.";
   init();
 });
+wireNavLinks();
 
 function key() {
   return localStorage.getItem("brgyos_owner_key") || "";
@@ -121,6 +122,21 @@ async function init() {
   } catch (e) {
     msg.textContent = e.message;
   }
+}
+
+function wireNavLinks() {
+  document.querySelectorAll(".nav-link[href^='#']").forEach((link) => {
+    const target = document.querySelector(link.getAttribute("href"));
+    if (!target) {
+      link.classList.add("disabled");
+      link.addEventListener("click", (e) => e.preventDefault());
+      return;
+    }
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
 }
 
 init();

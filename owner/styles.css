@@ -46,6 +46,11 @@ body {
   margin-bottom: 6px;
 }
 .nav-link:hover, .nav-link.active { background: rgba(255,255,255,0.1); color: #fff; }
+.nav-link.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+}
 .wrap { flex: 1; max-width: 1200px; margin: 24px auto; padding: 0 16px; overflow-x: hidden; }
 .page-footer { color: #6b7280; font-size: 13px; padding: 8px 2px 20px; }
 .card {
