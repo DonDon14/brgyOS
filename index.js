@@ -66,8 +66,13 @@ app.post("/webhook", async (req, res) => {
         const incomingText = event?.message?.text;
         const quickReplyPayload = event?.message?.quick_reply?.payload;
         const postbackPayload = event?.postback?.payload;
+        const isEcho = event?.message?.is_echo === true;
         if (senderId) {
           console.log("SENDER_PSID:", senderId);
+        }
+
+        if (isEcho) {
+          continue;
         }
 
         if (!senderId) {
