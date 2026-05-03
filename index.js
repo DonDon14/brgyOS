@@ -889,20 +889,42 @@ async function generateDocumentPdf(request) {
   await new Promise((resolve, reject) => {
     doc.pipe(writeStream);
 
-    doc.fontSize(18).text("Barangay Document Request", { align: "center" });
-    doc.moveDown();
-    doc.fontSize(12).text(`Reference ID: ${request.id}`);
-    doc.text(`Document Type: ${request.documentType}`);
-    doc.text(`Full Name: ${request.fullName}`);
-    doc.text(`Purpose: ${request.purpose}`);
-    doc.text(`Preferred Pickup Date: ${request.pickupDate}`);
-    doc.text(`Service Fee: PHP ${request.serviceFee}`);
-    doc.text(`Status: ${request.status}`);
-    doc.moveDown();
-    doc.text(`Issued On: ${new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" })}`);
+    const issueDate = new Date().toLocaleDateString("en-PH", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      timeZone: "Asia/Manila",
+    });
+
+    doc.fontSize(11).text("Republic of the Philippines", { align: "center" });
+    doc.fontSize(11).text("Province of Misamis Oriental", { align: "center" });
+    doc.fontSize(11).text("Municipality of Claveria", { align: "center" });
+    doc.fontSize(12).text("Barangay Ane-i", { align: "center" });
+    doc.moveDown(1.2);
+
+    const template = buildDocumentTemplate(request, issueDate);
+    doc.font("Helvetica-Bold").fontSize(15).text(template.title, { align: "center" });
+    doc.moveDown(1.2);
+    doc.font("Helvetica").fontSize(12).text(template.body, {
+      align: "justify",
+      lineGap: 3,
+      indent: 18,
+    });
+
+    doc.moveDown(1.2);
+    doc.font("Helvetica").fontSize(11).text(`Issued this ${issueDate} at Barangay Ane-i, Claveria, Misamis Oriental.`);
     doc.moveDown(2);
-    doc.text("Prepared by BrgyOS Messenger Workflow");
-    doc.text("Authorized Signature: _______________________");
+
+    doc.font("Helvetica-Bold").fontSize(11).text("ERNIE SINAYON", 70);
+    doc.font("Helvetica").fontSize(10).text("Punong Barangay / Barangay Captain", 70);
+
+    doc.font("Helvetica-Bold").fontSize(11).text("ARLENE OCERO", 340, doc.y - 26);
+    doc.font("Helvetica").fontSize(10).text("Barangay Secretary", 340);
+
+    doc.moveDown(2.2);
+    doc.font("Helvetica").fontSize(9).text(`Reference No.: ${request.id}`);
+    doc.text(`Resident Address: ${request.address || "-"}`);
+    doc.text(`Service Fee: PHP ${request.serviceFee}`);
     doc.end();
 
     writeStream.on("finish", resolve);
@@ -914,6 +936,51 @@ async function generateDocumentPdf(request) {
     return `${baseUrl.replace(/\/$/, "")}/files/${fileName}`;
   }
   return `PDF generated on server: /files/${fileName}`;
+}
+
+function buildDocumentTemplate(request, issueDate) {
+  const fullName = toTitleCase(request.fullName || "");
+  const address = toTitleCase(request.address || "");
+  const purpose = sentenceCase(request.purpose || "legal purpose");
+  const type = String(request.documentType || "").toLowerCase();
+
+  if (type.includes("indigency")) {
+    return {
+      title: "BARANGAY CERTIFICATE OF INDIGENCY",
+      body:
+        `TO WHOM IT MAY CONCERN:\n\n` +
+        `This is to certify that ${fullName}, of legal age, Filipino, and a bona fide resident of ${address}, Barangay Ane-i, Claveria, Misamis Oriental, is known in this barangay as an indigent resident based on records and community verification.\n\n` +
+        `This certification is issued upon the request of the above-named person for ${purpose} and for whatever legal purpose it may serve.`,
+    };
+  }
+
+  if (type.includes("residency") || type.includes("residence")) {
+    return {
+      title: "BARANGAY CERTIFICATE OF RESIDENCY",
+      body:
+        `TO WHOM IT MAY CONCERN:\n\n` +
+        `This is to certify that ${fullName}, of legal age, Filipino, is a bona fide resident of ${address}, Barangay Ane-i, Claveria, Misamis Oriental.\n\n` +
+        `This certification is issued upon the request of the above-named person for ${purpose} and for whatever legal purpose it may serve.`,
+    };
+  }
+
+  if (type.includes("certificate")) {
+    return {
+      title: "BARANGAY CERTIFICATION",
+      body:
+        `TO WHOM IT MAY CONCERN:\n\n` +
+        `This is to certify that ${fullName}, of legal age, Filipino, is a bona fide resident of ${address}, Barangay Ane-i, Claveria, Misamis Oriental.\n\n` +
+        `This certification is issued for ${purpose} and for whatever legal purpose it may serve.`,
+    };
+  }
+
+  return {
+    title: "BARANGAY CLEARANCE",
+    body:
+      `TO WHOM IT MAY CONCERN:\n\n` +
+      `This is to certify that ${fullName}, of legal age, Filipino, and a bona fide resident of ${address}, Barangay Ane-i, Claveria, Misamis Oriental, is known to be a person of good moral character and has no derogatory record or pending complaint on file in this barangay as of ${issueDate}.\n\n` +
+      `This clearance is issued upon request for ${purpose} and for whatever legal purpose it may serve.`,
+  };
 }
 
 async function notifyCustomer(recipientId, text) {
