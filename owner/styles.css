@@ -1,0 +1,13 @@
+:root { --line:#dce2ec; --brand:#1f6feb; }
+* { box-sizing:border-box; }
+body { margin:0; font-family:"Segoe UI", Tahoma, sans-serif; background:#edf2fa; color:#111827; }
+.wrap { max-width:1200px; margin:24px auto; padding:0 16px; }
+.card { background:white; border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+.auth { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-bottom:10px; }
+input,select,button { border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-size:14px; }
+button { background:var(--brand); color:#fff; border:0; cursor:pointer; }
+#msg { color:#4b5563; }
+table { width:100%; border-collapse:collapse; }
+th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; }
+.table-card { overflow-x:auto; }

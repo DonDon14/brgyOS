@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BrgyOS Owner Portal</title>
+  <link rel="stylesheet" href="/owner/styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>BrgyOS Owner Portal</h1>
+      <p>Create barangays, assign staff, and configure page/signatory settings.</p>
+    </header>
+
+    <section class="card auth">
+      <label for="ownerKey">Owner Key</label>
+      <input id="ownerKey" type="password" placeholder="Enter ADMIN_DASHBOARD_KEY" />
+      <button id="saveKeyBtn">Save Key</button>
+      <span id="msg"></span>
+    </section>
+
+    <section class="card">
+      <h2>Add Barangay</h2>
+      <div class="grid">
+        <input id="brgyId" placeholder="barangay id (e.g. anei)" />
+        <input id="brgyName" placeholder="barangay name" />
+        <input id="brgyMunicipality" placeholder="municipality" />
+        <input id="brgyProvince" placeholder="province" />
+        <input id="brgyCaptain" placeholder="captain name" />
+        <input id="brgySecretary" placeholder="secretary name" />
+        <input id="brgyPageId" placeholder="facebook page id" />
+        <input id="brgyPageToken" placeholder="facebook page access token" />
+        <input id="brgyLogo" placeholder="logo url (optional)" />
+      </div>
+      <button id="createBarangayBtn">Create Barangay</button>
+    </section>
+
+    <section class="card">
+      <h2>Add Staff</h2>
+      <div class="grid">
+        <input id="staffId" placeholder="staff id" />
+        <input id="staffName" placeholder="staff name" />
+        <select id="staffBarangay"></select>
+        <select id="staffRole">
+          <option value="staff">staff</option>
+          <option value="barangay_admin">barangay_admin</option>
+          <option value="owner">owner</option>
+        </select>
+        <input id="staffPsid" placeholder="messenger PSID" />
+      </div>
+      <button id="createStaffBtn">Create Staff</button>
+    </section>
+
+    <section class="card table-card">
+      <h2>Barangays</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>Name</th><th>Location</th><th>Captain</th><th>Secretary</th><th>Page ID</th>
+          </tr>
+        </thead>
+        <tbody id="barangayRows"></tbody>
+      </table>
+    </section>
+
+    <section class="card table-card">
+      <h2>Staff</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>Name</th><th>Role</th><th>Barangay</th><th>PSID</th><th>Active</th>
+          </tr>
+        </thead>
+        <tbody id="staffRows"></tbody>
+      </table>
+    </section>
+
+    <section class="card table-card">
+      <h2>Token Alerts</h2>
+      <table>
+        <thead><tr><th>Barangay</th><th>Status</th><th>Message</th><th>At</th></tr></thead>
+        <tbody id="alertRows"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/owner/app.js"></script>
+</body>
+</html>

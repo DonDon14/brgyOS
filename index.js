@@ -43,6 +43,7 @@ app.get("/ping", (_req, res) => {
 });
 app.use("/files", express.static(PDF_DIR));
 app.use("/admin", express.static(path.join(__dirname, "admin")));
+app.use("/owner", express.static(path.join(__dirname, "owner")));
 
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -1376,6 +1377,11 @@ app.patch("/api/owner/barangays/:id", requireAdminApiKey, async (req, res) => {
 app.get("/api/owner/staff", requireAdminApiKey, async (_req, res) => {
   await bootstrapPromise;
   return res.json({ data: [...staffMembers.values()] });
+});
+
+app.get("/api/owner/token-alerts", requireAdminApiKey, async (_req, res) => {
+  await bootstrapPromise;
+  return res.json({ data: Object.fromEntries(tokenAlerts.entries()) });
 });
 
 app.post("/api/owner/staff", requireAdminApiKey, async (req, res) => {
