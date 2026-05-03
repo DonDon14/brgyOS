@@ -107,6 +107,17 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
   const session = userSessions.get(senderId) || { step: null, draft: null, lang: detectedLang };
   session.lang = session.lang || detectedLang;
 
+  // Recover gracefully when a document quick-reply payload arrives without an active session.
+  if (!session.step && /^DOC_/.test(payload)) {
+    const selectedDoc = parseDocumentValue(text, payload);
+    userSessions.set(senderId, {
+      step: "awaiting_full_name",
+      draft: { senderId, lang: detectedLang, documentType: selectedDoc },
+      lang: detectedLang,
+    });
+    return promptForStep("awaiting_full_name", { documentType: selectedDoc }, detectedLang);
+  }
+
   if (/^start$/i.test(text) || /^request$/i.test(text)) {
     userSessions.set(senderId, {
       step: "awaiting_document",
