@@ -62,17 +62,20 @@ app.post("/webhook", async (req, res) => {
       for (const event of events) {
         const senderId = event?.sender?.id;
         const incomingText = event?.message?.text;
+        const postbackPayload = event?.postback?.payload;
         if (senderId) {
           console.log("SENDER_PSID:", senderId);
         }
 
-        if (!senderId || !incomingText) {
+        if (!senderId) {
           continue;
         }
 
-        const reply = await handleIncomingMessage(senderId, incomingText);
+        const reply = postbackPayload
+          ? await handlePostback(senderId, postbackPayload)
+          : await handleIncomingMessage(senderId, incomingText);
         if (reply) {
-          await sendMessengerText(senderId, reply);
+          await sendMessengerMessage(senderId, reply);
         }
       }
     }
@@ -99,35 +102,35 @@ async function handleIncomingMessage(senderId, rawText) {
       step: "awaiting_document",
       draft: { senderId },
     });
-    return "What document do you need? (Clearance, Indigency, Residency, or Certificate)";
+    return asText("What document do you need? (Clearance, Indigency, Residency, or Certificate)");
   }
 
   if (session.step === "awaiting_document") {
     session.draft.documentType = text;
     session.step = "awaiting_full_name";
     userSessions.set(senderId, session);
-    return "Please provide your full name.";
+    return asText("Please provide your full name.");
   }
 
   if (session.step === "awaiting_full_name") {
     session.draft.fullName = text;
     session.step = "awaiting_purpose";
     userSessions.set(senderId, session);
-    return "Please provide the purpose of request.";
+    return asText("Please provide the purpose of request.");
   }
 
   if (session.step === "awaiting_purpose") {
     session.draft.purpose = text;
     session.step = "awaiting_pickup_date";
     userSessions.set(senderId, session);
-    return "Preferred pickup date? (example: May 10, 2026)";
+    return asText("Preferred pickup date? (example: May 10, 2026)");
   }
 
   if (session.step === "awaiting_pickup_date") {
     session.draft.pickupDate = text;
     session.step = "awaiting_confirm";
     userSessions.set(senderId, session);
-    return (
+    return asText(
       "Please confirm your request:\n" +
       `Document: ${session.draft.documentType}\n` +
       `Full Name: ${session.draft.fullName}\n` +
@@ -141,39 +144,39 @@ async function handleIncomingMessage(senderId, rawText) {
   if (session.step === "awaiting_confirm") {
     if (/^cancel$/i.test(text)) {
       userSessions.delete(senderId);
-      return "Request cancelled. Reply START anytime to create a new request.";
+      return asText("Request cancelled. Reply START anytime to create a new request.");
     }
 
     if (/^confirm$/i.test(text)) {
       const request = createRequest(session.draft);
       userSessions.delete(senderId);
       logCommissionEvent(request);
-      return (
+      return asText(
         `Your request is submitted.\nReference ID: ${request.id}\n` +
         "Status: PENDING APPROVAL\n" +
         "You will receive an update after barangay staff review."
       );
     }
 
-    return "Reply CONFIRM to submit, or CANCEL to stop.";
+    return asText("Reply CONFIRM to submit, or CANCEL to stop.");
   }
 
   if (/status\s+/i.test(text)) {
     const refId = text.split(/\s+/)[1]?.toUpperCase();
-    if (!refId) return "Use: STATUS BRGY-2026-0001";
+    if (!refId) return asText("Use: STATUS BRGY-2026-0001");
     const request = requests.get(refId);
     if (!request || request.senderId !== senderId) {
-      return "No request found for that reference.";
+      return asText("No request found for that reference.");
     }
-    return formatCustomerStatus(request);
+    return asText(formatCustomerStatus(request));
   }
 
   if (isDocumentIntent(text)) {
     userSessions.set(senderId, { step: "awaiting_document", draft: { senderId } });
-    return "I can help with that. What document do you need?";
+    return asText("I can help with that. What document do you need?");
   }
 
-  return generateGeminiReply(text);
+  return asText(await generateGeminiReply(text));
 }
 
 async function handleAdminCommand(_senderId, commandText) {
@@ -183,44 +186,34 @@ async function handleAdminCommand(_senderId, commandText) {
   let refId = parts[1] ? parts[1].toUpperCase() : null;
 
   if (command === "/menu") {
-    return (
-      "Staff Menu:\n" +
-      "show pending\n" +
-      "approve\n" +
-      "generate pdf\n" +
-      "release\n\n" +
-      "You can also include a reference ID if needed."
-    );
+    return makeStaffMenu();
   }
 
   if (command === "/pending") {
     const pending = [...requests.values()].filter((item) => item.status === "PENDING_APPROVAL");
-    if (!pending.length) return "No pending requests.";
-    return pending
-      .slice(0, 10)
-      .map((item) => `${item.id} | ${item.fullName} | ${item.documentType} | ${item.status}`)
-      .join("\n");
+    if (!pending.length) return asText("No pending requests.");
+    return makePendingTemplate(pending[0]);
   }
 
   if (!refId && ["/approve", "/pdf", "/release"].includes(command)) {
     const fallback = findLatestRequestForAction(command);
-    if (!fallback) return "No matching request found. Try 'show pending' first.";
+    if (!fallback) return asText("No matching request found. Try 'show pending' first.");
     refId = fallback.id;
   }
 
   if (!refId) {
-    return "Try: show pending, approve, generate pdf, or release.";
+    return asText("Try: show pending, approve, generate pdf, or release.");
   }
 
   const request = requests.get(refId);
-  if (!request) return "Reference not found.";
+  if (!request) return asText("Reference not found.");
 
   if (command === "/approve") {
     request.status = "APPROVED";
     request.updatedAt = new Date().toISOString();
     persistRequests();
     await notifyCustomer(request.senderId, `Your request ${request.id} is APPROVED.`);
-    return `${request.id} approved. Next: /pdf ${request.id}`;
+    return asText(`${request.id} approved. Next: generate pdf`);
   }
 
   if (command === "/pdf") {
@@ -232,7 +225,7 @@ async function handleAdminCommand(_senderId, commandText) {
       request.senderId,
       `Your document for ${request.id} is ready.\nPDF: ${request.pdfUrl}`
     );
-    return `${request.id} PDF generated: ${request.pdfUrl}`;
+    return asText(`${request.id} PDF generated: ${request.pdfUrl}`);
   }
 
   if (command === "/release") {
@@ -240,13 +233,30 @@ async function handleAdminCommand(_senderId, commandText) {
     request.updatedAt = new Date().toISOString();
     persistRequests();
     await notifyCustomer(request.senderId, `Your request ${request.id} is marked as RELEASED.`);
-    return `${request.id} marked as released.`;
+    return asText(`${request.id} marked as released.`);
   }
 
-  return (
+  return asText(
     "Unknown staff action.\n" +
     "Try: 'show pending', 'approve', 'generate pdf', or 'release'."
   );
+}
+
+async function handlePostback(senderId, payload) {
+  if (!isAdmin(senderId)) return null;
+
+  if (payload === "STAFF_MENU") return makeStaffMenu();
+  if (payload === "SHOW_PENDING") return handleAdminCommand(senderId, "show pending");
+  if (payload === "APPROVE_LATEST") return handleAdminCommand(senderId, "approve");
+
+  const [action, refId] = String(payload).split("|");
+  if (!refId) return asText("Invalid action payload.");
+
+  if (action === "APPROVE") return handleAdminCommand(senderId, `approve ${refId}`);
+  if (action === "PDF") return handleAdminCommand(senderId, `generate pdf ${refId}`);
+  if (action === "RELEASE") return handleAdminCommand(senderId, `release ${refId}`);
+
+  return asText("Unknown action.");
 }
 
 function createRequest(draft) {
@@ -340,6 +350,43 @@ function findLatestRequestForAction(command) {
   return null;
 }
 
+function makeStaffMenu() {
+  return {
+    attachment: {
+      type: "template",
+      payload: {
+        template_type: "button",
+        text: "Staff Menu",
+        buttons: [
+          { type: "postback", title: "View Pending", payload: "SHOW_PENDING" },
+          { type: "postback", title: "Approve", payload: "APPROVE_LATEST" },
+        ],
+      },
+    },
+  };
+}
+
+function makePendingTemplate(request) {
+  return {
+    attachment: {
+      type: "template",
+      payload: {
+        template_type: "button",
+        text: `${request.id}\n${request.fullName}\n${request.documentType}\n${request.status}`,
+        buttons: [
+          { type: "postback", title: "Approve", payload: `APPROVE|${request.id}` },
+          { type: "postback", title: "Generate PDF", payload: `PDF|${request.id}` },
+          { type: "postback", title: "Release", payload: `RELEASE|${request.id}` },
+        ],
+      },
+    },
+  };
+}
+
+function asText(text) {
+  return { text };
+}
+
 async function generateGeminiReply(userText) {
   if (!GEMINI_API_KEY) {
     return "AI service is not configured yet. Please try again later.";
@@ -382,19 +429,20 @@ async function generateGeminiReply(userText) {
   }
 }
 
-async function sendMessengerText(recipientId, messageText) {
+async function sendMessengerMessage(recipientId, message) {
   if (!PAGE_ACCESS_TOKEN) {
     throw new Error("PAGE_ACCESS_TOKEN is missing.");
   }
 
   const endpoint = "https://graph.facebook.com/v20.0/me/messages";
+  const normalizedMessage = typeof message === "string" ? { text: message } : message;
 
   await axios.post(
     endpoint,
     {
       recipient: { id: recipientId },
       messaging_type: "RESPONSE",
-      message: { text: messageText },
+      message: normalizedMessage,
     },
     {
       params: { access_token: PAGE_ACCESS_TOKEN },
@@ -483,7 +531,7 @@ async function generateDocumentPdf(request) {
 
 async function notifyCustomer(recipientId, text) {
   try {
-    await sendMessengerText(recipientId, text);
+    await sendMessengerMessage(recipientId, text);
   } catch (error) {
     console.error("Failed to notify customer:", error?.response?.data || error.message);
   }
