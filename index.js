@@ -4,6 +4,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 const PDFDocument = require("pdfkit");
+const admin = require("firebase-admin");
 
 const app = express();
 app.use(express.json());
@@ -22,13 +23,20 @@ const ADMIN_PSID_LIST = (process.env.ADMIN_PSID_LIST || "")
 
 const userSessions = new Map();
 const requests = new Map();
+const barangays = new Map();
+const staffMembers = new Map();
+const tokenAlerts = new Map();
 const DATA_DIR = path.join(__dirname, "data");
 const PDF_DIR = path.join(__dirname, "generated-pdfs");
 const REQUESTS_FILE = path.join(DATA_DIR, "requests.json");
+const FIREBASE_SERVICE_ACCOUNT_JSON = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "";
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "";
 let requestCounter = 1;
 
 ensureStorage();
-loadRequestsFromDisk();
+const bootstrapPromise = bootstrapData().catch((error) => {
+  console.error("Bootstrap error:", error?.message || error);
+});
 
 app.get("/ping", (_req, res) => {
   res.status(200).send("pong");
@@ -50,6 +58,7 @@ app.get("/webhook", (req, res) => {
 
 app.post("/webhook", async (req, res) => {
   try {
+    await bootstrapPromise;
     const body = req.body;
 
     if (body.object !== "page") {
@@ -59,6 +68,8 @@ app.post("/webhook", async (req, res) => {
     const entries = body.entry || [];
 
     for (const entry of entries) {
+      const pageId = String(entry?.id || "");
+      const barangay = resolveBarangayByPageId(pageId);
       const events = entry.messaging || [];
 
       for (const event of events) {
@@ -80,10 +91,22 @@ app.post("/webhook", async (req, res) => {
         }
 
         const reply = postbackPayload
-          ? await handlePostback(senderId, postbackPayload)
-          : await handleIncomingMessage(senderId, incomingText, quickReplyPayload);
+          ? await handlePostback(senderId, postbackPayload, barangay)
+          : await handleIncomingMessage(senderId, incomingText, quickReplyPayload, barangay);
         if (reply) {
-          await sendMessengerMessage(senderId, reply);
+          try {
+            await sendMessengerMessage(senderId, reply, barangay?.pageAccessToken);
+          } catch (error) {
+            const code = error?.response?.data?.error?.code;
+            if (code === 190 && barangay?.id) {
+              tokenAlerts.set(barangay.id, {
+                status: "expired",
+                message: "Facebook Page token expired. Update token in barangay settings.",
+                at: new Date().toISOString(),
+              });
+            }
+            throw error;
+          }
         }
       }
     }
@@ -95,18 +118,18 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
+async function handleIncomingMessage(senderId, rawText, quickReplyPayload, barangay) {
   const text = String(rawText || "").trim();
   const payload = String(quickReplyPayload || "").trim();
   if (!text && !payload) return null;
   const detectedLang = detectResponseLanguage(text);
 
-  if (isAdmin(senderId) && payload.startsWith("STAFF_")) {
-    return handleAdminQuickReply(payload);
+  if (isAdmin(senderId, barangay?.id) && payload.startsWith("STAFF_")) {
+    return handleAdminQuickReply(payload, barangay?.id);
   }
 
-  if (isAdmin(senderId) && isAdminIntent(text)) {
-    return handleAdminCommand(senderId, text);
+  if (isAdmin(senderId, barangay?.id) && isAdminIntent(text)) {
+    return handleAdminCommand(senderId, text, barangay?.id);
   }
 
   const session = userSessions.get(senderId) || { step: null, draft: null, lang: detectedLang };
@@ -117,7 +140,12 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
     const selectedDoc = parseDocumentValue(text, payload);
     userSessions.set(senderId, {
       step: "awaiting_full_name",
-      draft: { senderId, lang: detectedLang, documentType: selectedDoc },
+      draft: {
+        senderId,
+        lang: detectedLang,
+        barangayId: barangay?.id || "default",
+        documentType: selectedDoc,
+      },
       lang: detectedLang,
     });
     return promptForStep("awaiting_full_name", { documentType: selectedDoc }, detectedLang);
@@ -126,7 +154,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
   if (/^start$/i.test(text) || /^request$/i.test(text)) {
     userSessions.set(senderId, {
       step: "awaiting_document",
-      draft: { senderId, lang: detectedLang },
+      draft: { senderId, lang: detectedLang, barangayId: barangay?.id || "default" },
       lang: detectedLang,
     });
     return promptForStep("awaiting_document", {}, detectedLang);
@@ -159,7 +187,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
           }
           return asText(validationError);
         }
-        const request = createRequest(normalizedDraft);
+      const request = await createRequest(normalizedDraft);
         userSessions.delete(senderId);
         logCommissionEvent(request);
         return asText(localize(session.lang, "submitted", request.id));
@@ -183,7 +211,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
   if (intent === "REQUEST") {
     userSessions.set(senderId, {
       step: "awaiting_document",
-      draft: { senderId, lang: detectedLang },
+      draft: { senderId, lang: detectedLang, barangayId: barangay?.id || "default" },
       lang: detectedLang,
     });
     return asQuickReply(localize(detectedLang, "ask_doc"), [
@@ -254,7 +282,7 @@ async function analyzeMessageIntent(userText) {
   }
 }
 
-async function handleAdminCommand(_senderId, commandText) {
+async function handleAdminCommand(_senderId, commandText, barangayId = "") {
   const normalized = normalizeAdminCommand(commandText);
   const parts = normalized.trim().split(/\s+/);
   const command = parts[0].toLowerCase();
@@ -265,13 +293,15 @@ async function handleAdminCommand(_senderId, commandText) {
   }
 
   if (command === "/pending") {
-    const pending = [...requests.values()].filter((item) => item.status === "PENDING_APPROVAL");
+    const pending = [...requests.values()].filter(
+      (item) => item.status === "PENDING_APPROVAL" && (!barangayId || item.barangayId === barangayId)
+    );
     if (!pending.length) return asText("No pending requests.");
     return makePendingTemplate(pending[0]);
   }
 
   if (!refId && ["/approve", "/pdf", "/release"].includes(command)) {
-    const fallback = findLatestRequestForAction(command);
+    const fallback = findLatestRequestForAction(command, barangayId);
     if (!fallback) return asText("No matching request found. Try 'show pending' first.");
     refId = fallback.id;
   }
@@ -284,24 +314,29 @@ async function handleAdminCommand(_senderId, commandText) {
   if (!request) return asText("Reference not found.");
 
   if (command === "/approve") {
-    updateRequestStatus(request, "APPROVED", "Approved by staff");
-    await notifyCustomer(request.senderId, `Your request ${request.id} is APPROVED.`);
+    await updateRequestStatus(request, "APPROVED", "Approved by staff");
+    await notifyCustomer(request.senderId, `Your request ${request.id} is APPROVED.`, request.barangayId);
     return makeApproveResultQuickReply(request);
   }
 
   if (command === "/pdf") {
     request.pdfUrl = await generateDocumentPdf(request);
-    updateRequestStatus(request, "PDF_GENERATED", "PDF generated by staff");
+    await updateRequestStatus(request, "PDF_GENERATED", "PDF generated by staff");
     await notifyCustomer(
       request.senderId,
-      `Your document for ${request.id} is ready.\nPDF: ${request.pdfUrl}`
+      `Your document for ${request.id} is ready.\nPDF: ${request.pdfUrl}`,
+      request.barangayId
     );
     return makePdfResultQuickReply(request);
   }
 
   if (command === "/release") {
-    updateRequestStatus(request, "RELEASED", "Released by staff");
-    await notifyCustomer(request.senderId, `Your request ${request.id} is marked as RELEASED.`);
+    await updateRequestStatus(request, "RELEASED", "Released by staff");
+    await notifyCustomer(
+      request.senderId,
+      `Your request ${request.id} is marked as RELEASED.`,
+      request.barangayId
+    );
     return makeReleaseResultQuickReply(request);
   }
 
@@ -311,39 +346,40 @@ async function handleAdminCommand(_senderId, commandText) {
   );
 }
 
-async function handlePostback(senderId, payload) {
-  if (!isAdmin(senderId)) return null;
+async function handlePostback(senderId, payload, barangay) {
+  if (!isAdmin(senderId, barangay?.id)) return null;
 
   if (payload === "STAFF_MENU") return makeStaffMenu();
-  if (payload === "SHOW_PENDING") return handleAdminCommand(senderId, "show pending");
-  if (payload === "APPROVE_LATEST") return handleAdminCommand(senderId, "approve");
+  if (payload === "SHOW_PENDING") return handleAdminCommand(senderId, "show pending", barangay?.id);
+  if (payload === "APPROVE_LATEST") return handleAdminCommand(senderId, "approve", barangay?.id);
 
   const [action, refId] = String(payload).split("|");
   if (!refId) return asText("Invalid action payload.");
 
-  if (action === "APPROVE") return handleAdminCommand(senderId, `approve ${refId}`);
-  if (action === "PDF") return handleAdminCommand(senderId, `generate pdf ${refId}`);
-  if (action === "RELEASE") return handleAdminCommand(senderId, `release ${refId}`);
+  if (action === "APPROVE") return handleAdminCommand(senderId, `approve ${refId}`, barangay?.id);
+  if (action === "PDF") return handleAdminCommand(senderId, `generate pdf ${refId}`, barangay?.id);
+  if (action === "RELEASE") return handleAdminCommand(senderId, `release ${refId}`, barangay?.id);
 
   return asText("Unknown action.");
 }
 
-function handleAdminQuickReply(payload) {
-  if (payload === "STAFF_PENDING") return handleAdminCommand("", "show pending");
-  if (payload === "STAFF_APPROVE") return handleAdminCommand("", "approve");
-  if (payload === "STAFF_PDF") return handleAdminCommand("", "generate pdf");
-  if (payload === "STAFF_RELEASE") return handleAdminCommand("", "release");
+function handleAdminQuickReply(payload, barangayId = "") {
+  if (payload === "STAFF_PENDING") return handleAdminCommand("", "show pending", barangayId);
+  if (payload === "STAFF_APPROVE") return handleAdminCommand("", "approve", barangayId);
+  if (payload === "STAFF_PDF") return handleAdminCommand("", "generate pdf", barangayId);
+  if (payload === "STAFF_RELEASE") return handleAdminCommand("", "release", barangayId);
   if (payload === "STAFF_MENU") return makeStaffMenuQuickReply();
   return asText("Unknown staff quick action.");
 }
 
-function createRequest(draft) {
+async function createRequest(draft) {
   const id = `BRGY-${new Date().getFullYear()}-${String(requestCounter).padStart(4, "0")}`;
   requestCounter += 1;
 
   const request = {
     id,
     senderId: draft.senderId,
+    barangayId: draft.barangayId || "default",
     documentType: draft.documentType,
     fullName: draft.fullName,
     address: draft.address,
@@ -365,11 +401,11 @@ function createRequest(draft) {
   };
 
   requests.set(id, request);
-  persistRequests();
+  await persistRequests();
   return request;
 }
 
-function updateRequestStatus(request, newStatus, note) {
+async function updateRequestStatus(request, newStatus, note) {
   request.status = newStatus;
   request.updatedAt = new Date().toISOString();
   if (!Array.isArray(request.history)) request.history = [];
@@ -378,7 +414,7 @@ function updateRequestStatus(request, newStatus, note) {
     action: newStatus,
     note,
   });
-  persistRequests();
+  await persistRequests();
 }
 
 function formatCustomerStatus(request) {
@@ -391,8 +427,15 @@ function formatCustomerStatus(request) {
   );
 }
 
-function isAdmin(senderId) {
-  return ADMIN_PSID_LIST.includes(senderId);
+function isAdmin(senderId, barangayId = "") {
+  if (ADMIN_PSID_LIST.includes(senderId)) return true;
+  for (const staff of staffMembers.values()) {
+    if (staff.psid === senderId && staff.active !== false) {
+      if (!barangayId) return true;
+      return staff.barangayId === barangayId || staff.role === "owner";
+    }
+  }
+  return false;
 }
 
 function isAdminIntent(text) {
@@ -438,14 +481,15 @@ function isDocumentIntent(text) {
   return /(clearance|indigency|residency|certificate|permit|document)/i.test(text);
 }
 
-function findLatestRequestForAction(command) {
+function findLatestRequestForAction(command, barangayId = "") {
   const items = [...requests.values()].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   );
+  const scoped = barangayId ? items.filter((item) => item.barangayId === barangayId) : items;
 
-  if (command === "/approve") return items.find((item) => item.status === "PENDING_APPROVAL") || null;
-  if (command === "/pdf") return items.find((item) => item.status === "APPROVED") || null;
-  if (command === "/release") return items.find((item) => item.status === "PDF_GENERATED") || null;
+  if (command === "/approve") return scoped.find((item) => item.status === "PENDING_APPROVAL") || null;
+  if (command === "/pdf") return scoped.find((item) => item.status === "APPROVED") || null;
+  if (command === "/release") return scoped.find((item) => item.status === "PDF_GENERATED") || null;
   return null;
 }
 
@@ -852,8 +896,9 @@ async function generateGeminiReply(userText) {
   }
 }
 
-async function sendMessengerMessage(recipientId, message) {
-  if (!PAGE_ACCESS_TOKEN) {
+async function sendMessengerMessage(recipientId, message, pageAccessToken = "") {
+  const token = pageAccessToken || PAGE_ACCESS_TOKEN;
+  if (!token) {
     throw new Error("PAGE_ACCESS_TOKEN is missing.");
   }
 
@@ -868,7 +913,7 @@ async function sendMessengerMessage(recipientId, message) {
       message: normalizedMessage,
     },
     {
-      params: { access_token: PAGE_ACCESS_TOKEN },
+      params: { access_token: token },
       headers: { "Content-Type": "application/json" },
       timeout: 15000,
     }
@@ -894,6 +939,32 @@ function ensureStorage() {
   if (!fs.existsSync(PDF_DIR)) fs.mkdirSync(PDF_DIR, { recursive: true });
 }
 
+function isFirestoreConfigured() {
+  return Boolean(FIREBASE_SERVICE_ACCOUNT_JSON || FIREBASE_PROJECT_ID);
+}
+
+function getFirestoreDb() {
+  if (!isFirestoreConfigured()) return null;
+  if (!admin.apps.length) {
+    if (FIREBASE_SERVICE_ACCOUNT_JSON) {
+      const serviceAccount = JSON.parse(FIREBASE_SERVICE_ACCOUNT_JSON);
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    } else {
+      admin.initializeApp({ projectId: FIREBASE_PROJECT_ID });
+    }
+  }
+  return admin.firestore();
+}
+
+async function bootstrapData() {
+  ensureStorage();
+  if (isFirestoreConfigured()) {
+    await loadFromFirestore();
+  } else {
+    loadRequestsFromDisk();
+  }
+}
+
 function loadRequestsFromDisk() {
   if (!fs.existsSync(REQUESTS_FILE)) return;
   try {
@@ -908,12 +979,115 @@ function loadRequestsFromDisk() {
   }
 }
 
-function persistRequests() {
+async function loadFromFirestore() {
+  const db = getFirestoreDb();
+  if (!db) return;
+
+  requests.clear();
+  barangays.clear();
+  staffMembers.clear();
+
+  const [rqSnap, brgySnap, staffSnap] = await Promise.all([
+    db.collection("requests").get(),
+    db.collection("barangays").get(),
+    db.collection("staff").get(),
+  ]);
+
+  rqSnap.forEach((docRef) => {
+    const item = docRef.data();
+    if (item?.id) requests.set(item.id, item);
+  });
+  brgySnap.forEach((docRef) => {
+    const b = docRef.data();
+    if (b?.id) barangays.set(b.id, b);
+  });
+  staffSnap.forEach((docRef) => {
+    const s = docRef.data();
+    if (s?.id) staffMembers.set(s.id, s);
+  });
+
+  if (!barangays.size) {
+    const defaultBarangay = {
+      id: "default",
+      name: "Barangay Ane-i",
+      municipality: "Claveria",
+      province: "Misamis Oriental",
+      captainName: "Ernie Sinayon",
+      secretaryName: "Arlene Ocero",
+      pageId: process.env.DEFAULT_PAGE_ID || "",
+      pageAccessToken: PAGE_ACCESS_TOKEN || "",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    barangays.set(defaultBarangay.id, defaultBarangay);
+    await db.collection("barangays").doc(defaultBarangay.id).set(defaultBarangay);
+  }
+
+  requestCounter = Math.max(
+    1,
+    ...[...requests.values()]
+      .map((r) => Number(String(r.id || "").split("-").pop() || 0))
+      .filter((n) => Number.isFinite(n))
+  ) + 1;
+}
+
+async function persistRequests() {
+  const db = getFirestoreDb();
+  if (db) {
+    const batch = db.batch();
+    for (const request of requests.values()) {
+      batch.set(db.collection("requests").doc(request.id), request, { merge: true });
+    }
+    await batch.commit();
+    return;
+  }
   const payload = {
     requestCounter,
     requests: [...requests.values()],
   };
   fs.writeFileSync(REQUESTS_FILE, JSON.stringify(payload, null, 2), "utf8");
+}
+
+async function persistBarangays() {
+  const db = getFirestoreDb();
+  if (!db) return;
+  const batch = db.batch();
+  for (const barangay of barangays.values()) {
+    batch.set(db.collection("barangays").doc(barangay.id), barangay, { merge: true });
+  }
+  await batch.commit();
+}
+
+async function persistStaffMembers() {
+  const db = getFirestoreDb();
+  if (!db) return;
+  const batch = db.batch();
+  for (const staff of staffMembers.values()) {
+    batch.set(db.collection("staff").doc(staff.id), staff, { merge: true });
+  }
+  await batch.commit();
+}
+
+async function writeAuditLog(action, actorId, request) {
+  const db = getFirestoreDb();
+  if (!db) return;
+  const record = {
+    action,
+    actorId,
+    barangayId: request.barangayId || "",
+    requestId: request.id || "",
+    at: new Date().toISOString(),
+  };
+  await db.collection("audit_logs").add(record);
+}
+
+function resolveBarangayByPageId(pageId) {
+  if (!pageId) return barangays.get("default") || [...barangays.values()][0] || null;
+  for (const b of barangays.values()) {
+    if (String(b.pageId || "") === String(pageId)) return b;
+  }
+  return barangays.get("default") || [...barangays.values()][0] || null;
 }
 
 async function generateDocumentPdf(request) {
@@ -932,13 +1106,20 @@ async function generateDocumentPdf(request) {
       timeZone: "Asia/Manila",
     });
 
+    const barangay = barangays.get(request.barangayId || "default") || resolveBarangayByPageId("");
+    const barangayName = barangay?.name || "Barangay";
+    const municipality = barangay?.municipality || "Municipality";
+    const province = barangay?.province || "Province";
+    const captainName = (barangay?.captainName || "Barangay Captain").toUpperCase();
+    const secretaryName = (barangay?.secretaryName || "Barangay Secretary").toUpperCase();
+
     doc.fontSize(11).text("Republic of the Philippines", { align: "center" });
-    doc.fontSize(11).text("Province of Misamis Oriental", { align: "center" });
-    doc.fontSize(11).text("Municipality of Claveria", { align: "center" });
-    doc.fontSize(12).text("Barangay Ane-i", { align: "center" });
+    doc.fontSize(11).text(`Province of ${province}`, { align: "center" });
+    doc.fontSize(11).text(`Municipality of ${municipality}`, { align: "center" });
+    doc.fontSize(12).text(barangayName, { align: "center" });
     doc.moveDown(1.2);
 
-    const template = buildDocumentTemplate(request, issueDate);
+    const template = buildDocumentTemplate(request, issueDate, barangayName, municipality, province);
     doc.font("Helvetica-Bold").fontSize(15).text(template.title, { align: "center" });
     doc.moveDown(1.2);
     doc.font("Helvetica").fontSize(12).text(template.body, {
@@ -948,13 +1129,13 @@ async function generateDocumentPdf(request) {
     });
 
     doc.moveDown(1.2);
-    doc.font("Helvetica").fontSize(11).text(`Issued this ${issueDate} at Barangay Ane-i, Claveria, Misamis Oriental.`);
+    doc.font("Helvetica").fontSize(11).text(`Issued this ${issueDate} at ${barangayName}, ${municipality}, ${province}.`);
     doc.moveDown(2);
 
-    doc.font("Helvetica-Bold").fontSize(11).text("ERNIE SINAYON", 70);
+    doc.font("Helvetica-Bold").fontSize(11).text(captainName, 70);
     doc.font("Helvetica").fontSize(10).text("Punong Barangay / Barangay Captain", 70);
 
-    doc.font("Helvetica-Bold").fontSize(11).text("ARLENE OCERO", 340, doc.y - 26);
+    doc.font("Helvetica-Bold").fontSize(11).text(secretaryName, 340, doc.y - 26);
     doc.font("Helvetica").fontSize(10).text("Barangay Secretary", 340);
 
     doc.moveDown(2.2);
@@ -973,7 +1154,7 @@ async function generateDocumentPdf(request) {
   return `PDF generated on server: /files/${fileName}`;
 }
 
-function buildDocumentTemplate(request, issueDate) {
+function buildDocumentTemplate(request, issueDate, barangayName, municipality, province) {
   const fullName = toTitleCase(request.fullName || "");
   const address = toTitleCase(request.address || "");
   const purpose = sentenceCase(request.purpose || "legal purpose");
@@ -984,7 +1165,7 @@ function buildDocumentTemplate(request, issueDate) {
       title: "BARANGAY CERTIFICATE OF INDIGENCY",
       body:
         `TO WHOM IT MAY CONCERN:\n\n` +
-        `This is to certify that ${fullName}, of legal age, Filipino, and a bona fide resident of ${address}, Barangay Ane-i, Claveria, Misamis Oriental, is known in this barangay as an indigent resident based on records and community verification.\n\n` +
+        `This is to certify that ${fullName}, of legal age, Filipino, and a bona fide resident of ${address}, ${barangayName}, ${municipality}, ${province}, is known in this barangay as an indigent resident based on records and community verification.\n\n` +
         `This certification is issued upon the request of the above-named person for ${purpose} and for whatever legal purpose it may serve.`,
     };
   }
@@ -994,7 +1175,7 @@ function buildDocumentTemplate(request, issueDate) {
       title: "BARANGAY CERTIFICATE OF RESIDENCY",
       body:
         `TO WHOM IT MAY CONCERN:\n\n` +
-        `This is to certify that ${fullName}, of legal age, Filipino, is a bona fide resident of ${address}, Barangay Ane-i, Claveria, Misamis Oriental.\n\n` +
+        `This is to certify that ${fullName}, of legal age, Filipino, is a bona fide resident of ${address}, ${barangayName}, ${municipality}, ${province}.\n\n` +
         `This certification is issued upon the request of the above-named person for ${purpose} and for whatever legal purpose it may serve.`,
     };
   }
@@ -1004,7 +1185,7 @@ function buildDocumentTemplate(request, issueDate) {
       title: "BARANGAY CERTIFICATION",
       body:
         `TO WHOM IT MAY CONCERN:\n\n` +
-        `This is to certify that ${fullName}, of legal age, Filipino, is a bona fide resident of ${address}, Barangay Ane-i, Claveria, Misamis Oriental.\n\n` +
+        `This is to certify that ${fullName}, of legal age, Filipino, is a bona fide resident of ${address}, ${barangayName}, ${municipality}, ${province}.\n\n` +
         `This certification is issued for ${purpose} and for whatever legal purpose it may serve.`,
     };
   }
@@ -1013,15 +1194,24 @@ function buildDocumentTemplate(request, issueDate) {
     title: "BARANGAY CLEARANCE",
     body:
       `TO WHOM IT MAY CONCERN:\n\n` +
-      `This is to certify that ${fullName}, of legal age, Filipino, and a bona fide resident of ${address}, Barangay Ane-i, Claveria, Misamis Oriental, is known to be a person of good moral character and has no derogatory record or pending complaint on file in this barangay as of ${issueDate}.\n\n` +
+      `This is to certify that ${fullName}, of legal age, Filipino, and a bona fide resident of ${address}, ${barangayName}, ${municipality}, ${province}, is known to be a person of good moral character and has no derogatory record or pending complaint on file in this barangay as of ${issueDate}.\n\n` +
       `This clearance is issued upon request for ${purpose} and for whatever legal purpose it may serve.`,
   };
 }
 
-async function notifyCustomer(recipientId, text) {
+async function notifyCustomer(recipientId, text, barangayId = "") {
   try {
-    await sendMessengerMessage(recipientId, text);
+    const barangay = barangayId ? barangays.get(barangayId) : null;
+    await sendMessengerMessage(recipientId, text, barangay?.pageAccessToken || "");
   } catch (error) {
+    const code = error?.response?.data?.error?.code;
+    if (code === 190 && barangayId) {
+      tokenAlerts.set(barangayId, {
+        status: "expired",
+        message: "Facebook Page token expired. Reconnect or update token in barangay settings.",
+        at: new Date().toISOString(),
+      });
+    }
     console.error("Failed to notify customer:", error?.response?.data || error.message);
   }
 }
@@ -1034,51 +1224,66 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/admin/requests", requireAdminApiKey, (req, res) => {
+app.get("/api/admin/requests", requireAdminApiKey, async (req, res) => {
+  await bootstrapPromise;
   const status = String(req.query.status || "ALL").toUpperCase();
+  const barangayId = String(req.query.barangayId || "");
   let items = [...requests.values()].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   );
+
+  if (barangayId) {
+    items = items.filter((item) => item.barangayId === barangayId);
+  }
 
   if (status !== "ALL") {
     items = items.filter((item) => item.status === status);
   }
 
-  res.json({ data: items });
+  res.json({ data: items, tokenAlerts: Object.fromEntries(tokenAlerts.entries()) });
 });
 
 app.post("/api/admin/requests/:id/approve", requireAdminApiKey, async (req, res) => {
+  await bootstrapPromise;
   const request = requests.get(String(req.params.id || "").toUpperCase());
   if (!request) return res.status(404).json({ error: "Request not found." });
 
-  updateRequestStatus(request, "APPROVED", "Approved from dashboard");
-  await notifyCustomer(request.senderId, `Your request ${request.id} is APPROVED.`);
+  await updateRequestStatus(request, "APPROVED", "Approved from dashboard");
+  await notifyCustomer(request.senderId, `Your request ${request.id} is APPROVED.`, request.barangayId);
+  await writeAuditLog("APPROVE", "dashboard_admin", request);
   return res.json({ ok: true, data: request });
 });
 
 app.post("/api/admin/requests/:id/pdf", requireAdminApiKey, async (req, res) => {
+  await bootstrapPromise;
   const request = requests.get(String(req.params.id || "").toUpperCase());
   if (!request) return res.status(404).json({ error: "Request not found." });
 
   request.pdfUrl = await generateDocumentPdf(request);
-  updateRequestStatus(request, "PDF_GENERATED", "PDF generated from dashboard");
-  await notifyCustomer(request.senderId, `Your document for ${request.id} is ready.\nPDF: ${request.pdfUrl}`);
+  await updateRequestStatus(request, "PDF_GENERATED", "PDF generated from dashboard");
+  await notifyCustomer(request.senderId, `Your document for ${request.id} is ready.\nPDF: ${request.pdfUrl}`, request.barangayId);
+  await writeAuditLog("GENERATE_PDF", "dashboard_admin", request);
   return res.json({ ok: true, data: request });
 });
 
 app.post("/api/admin/requests/:id/release", requireAdminApiKey, async (req, res) => {
+  await bootstrapPromise;
   const request = requests.get(String(req.params.id || "").toUpperCase());
   if (!request) return res.status(404).json({ error: "Request not found." });
 
-  updateRequestStatus(request, "RELEASED", "Released from dashboard");
-  await notifyCustomer(request.senderId, `Your request ${request.id} is marked as RELEASED.`);
+  await updateRequestStatus(request, "RELEASED", "Released from dashboard");
+  await notifyCustomer(request.senderId, `Your request ${request.id} is marked as RELEASED.`, request.barangayId);
+  await writeAuditLog("RELEASE", "dashboard_admin", request);
   return res.json({ ok: true, data: request });
 });
 
-app.get("/api/admin/export.csv", requireAdminApiKey, (_req, res) => {
+app.get("/api/admin/export.csv", requireAdminApiKey, async (req, res) => {
+  await bootstrapPromise;
+  const barangayId = String(req.query.barangayId || "");
   const items = [...requests.values()].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   );
+  const scoped = barangayId ? items.filter((item) => item.barangayId === barangayId) : items;
 
   const headers = [
     "reference_id",
@@ -1097,7 +1302,7 @@ app.get("/api/admin/export.csv", requireAdminApiKey, (_req, res) => {
   const escapeCsv = (value) => `"${String(value || "").replace(/"/g, '""')}"`;
   const lines = [headers.join(",")];
 
-  for (const item of items) {
+  for (const item of scoped) {
     lines.push(
       [
         item.id,
@@ -1123,11 +1328,84 @@ app.get("/api/admin/export.csv", requireAdminApiKey, (_req, res) => {
   return res.status(200).send(csv);
 });
 
-app.get("/api/admin/backup.json", requireAdminApiKey, (_req, res) => {
-  if (!fs.existsSync(REQUESTS_FILE)) {
-    return res.status(404).json({ error: "No backup file found." });
-  }
-  return res.download(REQUESTS_FILE, `brgyos-requests-backup-${new Date().toISOString().slice(0, 10)}.json`);
+app.get("/api/admin/backup.json", requireAdminApiKey, async (_req, res) => {
+  await bootstrapPromise;
+  const payload = { requests: [...requests.values()], barangays: [...barangays.values()], staff: [...staffMembers.values()] };
+  return res.status(200).json(payload);
+});
+
+app.get("/api/owner/barangays", requireAdminApiKey, async (_req, res) => {
+  await bootstrapPromise;
+  return res.json({ data: [...barangays.values()] });
+});
+
+app.post("/api/owner/barangays", requireAdminApiKey, async (req, res) => {
+  await bootstrapPromise;
+  const input = req.body || {};
+  const id = String(input.id || "").trim().toLowerCase() || `brgy-${Date.now()}`;
+  const record = {
+    id,
+    name: input.name || id,
+    municipality: input.municipality || "",
+    province: input.province || "",
+    logoUrl: input.logoUrl || "",
+    captainName: input.captainName || "",
+    secretaryName: input.secretaryName || "",
+    pageId: input.pageId || "",
+    pageAccessToken: input.pageAccessToken || "",
+    status: "active",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  barangays.set(id, record);
+  await persistBarangays();
+  return res.json({ ok: true, data: record });
+});
+
+app.patch("/api/owner/barangays/:id", requireAdminApiKey, async (req, res) => {
+  await bootstrapPromise;
+  const id = String(req.params.id || "").toLowerCase();
+  const existing = barangays.get(id);
+  if (!existing) return res.status(404).json({ error: "Barangay not found." });
+  Object.assign(existing, req.body || {}, { updatedAt: new Date().toISOString() });
+  barangays.set(id, existing);
+  await persistBarangays();
+  return res.json({ ok: true, data: existing });
+});
+
+app.get("/api/owner/staff", requireAdminApiKey, async (_req, res) => {
+  await bootstrapPromise;
+  return res.json({ data: [...staffMembers.values()] });
+});
+
+app.post("/api/owner/staff", requireAdminApiKey, async (req, res) => {
+  await bootstrapPromise;
+  const input = req.body || {};
+  const id = String(input.id || "").trim().toLowerCase() || `staff-${Date.now()}`;
+  const record = {
+    id,
+    name: input.name || id,
+    barangayId: input.barangayId || "default",
+    role: input.role || "staff",
+    psid: input.psid || "",
+    active: input.active !== false,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  staffMembers.set(id, record);
+  await persistStaffMembers();
+  return res.json({ ok: true, data: record });
+});
+
+app.patch("/api/owner/staff/:id", requireAdminApiKey, async (req, res) => {
+  await bootstrapPromise;
+  const id = String(req.params.id || "").toLowerCase();
+  const existing = staffMembers.get(id);
+  if (!existing) return res.status(404).json({ error: "Staff not found." });
+  Object.assign(existing, req.body || {}, { updatedAt: new Date().toISOString() });
+  staffMembers.set(id, existing);
+  await persistStaffMembers();
+  return res.json({ ok: true, data: existing });
 });
 
 function requireAdminApiKey(req, res, next) {

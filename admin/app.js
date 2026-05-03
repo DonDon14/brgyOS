@@ -1,6 +1,7 @@
 const rows = document.getElementById("rows");
 const historyRows = document.getElementById("historyRows");
 const msg = document.getElementById("msg");
+const barangayFilter = document.getElementById("barangayFilter");
 const filter = document.getElementById("statusFilter");
 const refreshBtn = document.getElementById("refreshBtn");
 const exportBtn = document.getElementById("exportBtn");
@@ -14,6 +15,7 @@ const modalTimeline = document.getElementById("modalTimeline");
 const modalPdfLink = document.getElementById("modalPdfLink");
 const closeModalBtn = document.getElementById("closeModalBtn");
 let currentItems = [];
+let currentBarangays = [];
 
 adminKeyInput.value = localStorage.getItem("brgyos_admin_key") || "";
 
@@ -25,6 +27,7 @@ saveKeyBtn.addEventListener("click", () => {
 
 refreshBtn.addEventListener("click", loadRequests);
 filter.addEventListener("change", loadRequests);
+barangayFilter.addEventListener("change", loadRequests);
 exportBtn.addEventListener("click", downloadCsv);
 backupBtn.addEventListener("click", downloadBackup);
 closeModalBtn.addEventListener("click", () => requestModal.close());
@@ -162,8 +165,9 @@ function openModal(item) {
 async function loadRequests() {
   try {
     const status = filter.value;
+    const barangayId = barangayFilter.value || "";
     setMsg("Loading requests...");
-    const result = await api(`/api/admin/requests?status=${encodeURIComponent(status)}`);
+    const result = await api(`/api/admin/requests?status=${encodeURIComponent(status)}&barangayId=${encodeURIComponent(barangayId)}`);
     render(result.data || []);
     setMsg(`Loaded ${result.data.length} request(s).`);
   } catch (error) {
@@ -178,7 +182,8 @@ async function downloadCsv() {
     setMsg("Set admin key first.");
     return;
   }
-  window.open(`/api/admin/export.csv?key=${encodeURIComponent(key)}`, "_blank");
+  const barangayId = barangayFilter.value || "";
+  window.open(`/api/admin/export.csv?key=${encodeURIComponent(key)}&barangayId=${encodeURIComponent(barangayId)}`, "_blank");
 }
 
 async function downloadBackup() {
@@ -190,4 +195,21 @@ async function downloadBackup() {
   window.open(`/api/admin/backup.json?key=${encodeURIComponent(key)}`, "_blank");
 }
 
-loadRequests();
+async function loadBarangays() {
+  try {
+    const result = await api("/api/owner/barangays");
+    currentBarangays = result.data || [];
+    barangayFilter.innerHTML = `<option value="">All</option>${currentBarangays
+      .map((b) => `<option value="${b.id}">${b.name || b.id}</option>`)
+      .join("")}`;
+  } catch (_error) {
+    barangayFilter.innerHTML = `<option value="">All</option>`;
+  }
+}
+
+async function init() {
+  await loadBarangays();
+  await loadRequests();
+}
+
+init();
