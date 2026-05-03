@@ -1,6 +1,22 @@
 # BrgyOS Staging Workflow (Fast Dev)
 
 ## 1) Run local staging server
+Create local access keys in `.env` before opening the dashboards:
+```bash
+STAFF_DASHBOARD_KEY=choose-a-staff-key
+OWNER_DASHBOARD_KEY=choose-an-owner-key
+```
+
+`ADMIN_DASHBOARD_KEY` is still accepted as a temporary fallback, but the pilot should use separate staff and owner keys.
+
+For a live pilot, use Firestore so data survives deploys/restarts:
+```bash
+FIREBASE_PROJECT_ID=your-firebase-project-id
+# or use FIREBASE_SERVICE_ACCOUNT_JSON for a service account JSON string
+```
+
+If Firebase is not configured, BrgyOS falls back to `data/requests.json` and now stores requests, barangays, staff, and token alerts there for small local pilots.
+
 ```bash
 npm install
 npm run staging

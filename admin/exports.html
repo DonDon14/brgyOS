@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BrgyOS Exports</title>
+  <link rel="stylesheet" href="/admin/styles.css" />
+</head>
+<body>
+  <header class="topbar"><div><div class="brand">BrgyOS</div><div class="topbar-subtitle">Barangay service desk</div></div><div class="portal-tag">Staff Portal</div></header>
+  <div class="layout">
+    <aside class="sidenav">
+      <h3>Barangay Portal</h3>
+      <a class="nav-link" href="/admin/">Dashboard</a>
+      <a class="nav-link" href="/admin/requests.html">Request Queue</a>
+      <a class="nav-link" href="/admin/history.html">History</a>
+      <a class="nav-link active" href="/admin/exports.html">Exports</a>
+    </aside>
+    <main class="wrap">
+      <header class="page-heading hero-panel compact-hero">
+        <div>
+          <span class="eyebrow">Records</span>
+          <h1>Exports and Backup</h1>
+          <p>Download request records for reports or manual backup.</p>
+        </div>
+      </header>
+      <section class="auth card">
+        <label for="adminKey">Staff Access Key</label>
+        <input id="adminKey" type="password" placeholder="Paste staff access key" />
+        <button id="saveKeyBtn">Unlock</button>
+      </section>
+      <section class="toolbar card">
+        <label for="barangayFilter">Barangay<select id="barangayFilter"></select></label>
+        <button id="exportBtn" type="button">Export CSV</button>
+        <button id="backupBtn" type="button" class="secondary">Download Backup</button>
+        <span id="msg"></span>
+      </section>
+      <section class="two-column">
+        <article class="card">
+          <h2>CSV Export</h2>
+          <p class="muted">Use this for monthly reporting, quick spreadsheet checks, and printed summaries.</p>
+        </article>
+        <article class="card">
+          <h2>JSON Backup</h2>
+          <p class="muted">Use this as a manual fallback copy while the pilot is still small.</p>
+        </article>
+      </section>
+      <footer class="page-footer">BrgyOS Barangay Portal</footer>
+    </main>
+  </div>
+  <script src="/admin/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Owner - Connection Setup</title>
+  <link rel="stylesheet" href="/owner/styles.css" />
+</head>
+<body>
+  <header class="topbar"><div><div class="brand">BrgyOS</div><div class="topbar-subtitle">Pilot control center</div></div><div class="portal-tag">Owner Portal</div></header>
+  <div class="layout">
+    <aside class="sidenav">
+      <h3>Owner Portal</h3>
+      <a class="nav-link" href="/owner/">Dashboard</a>
+      <a class="nav-link" href="/owner/barangays.html">Barangays</a>
+      <a class="nav-link" href="/owner/staff.html">Staff</a>
+      <a class="nav-link active" href="/owner/settings.html">Connection Setup</a>
+      <a class="nav-link" href="/owner/analytics.html">Token Health</a>
+    </aside>
+    <main class="wrap">
+      <header class="page-heading hero-panel compact-hero">
+        <div>
+          <span class="eyebrow">Messenger Setup</span>
+          <h1>Connection Setup</h1>
+          <p>Add Facebook Page details needed for Messenger request intake.</p>
+        </div>
+      </header>
+      <section class="card auth">
+        <label for="ownerKey">Owner Access Key</label>
+        <input id="ownerKey" type="password" placeholder="Paste owner access key" />
+        <button id="saveKeyBtn">Unlock</button>
+        <span id="msg"></span>
+      </section>
+      <section class="card form-card">
+        <h2>Add Connected Barangay</h2>
+        <div class="grid">
+          <label>Barangay ID<input id="brgyId" placeholder="anei" /></label>
+          <label>Name<input id="brgyName" placeholder="Barangay Ane-i" /></label>
+          <label>Municipality<input id="brgyMunicipality" placeholder="Claveria" /></label>
+          <label>Province<input id="brgyProvince" placeholder="Misamis Oriental" /></label>
+          <label>Captain<input id="brgyCaptain" placeholder="Captain name" /></label>
+          <label>Secretary<input id="brgySecretary" placeholder="Secretary name" /></label>
+          <label>Facebook Page ID<input id="brgyPageId" placeholder="Page ID" /></label>
+          <label>Page Access Token<input id="brgyPageToken" type="password" placeholder="Page token" /></label>
+          <label>Logo URL<input id="brgyLogo" placeholder="Optional" /></label>
+        </div>
+        <div class="form-actions">
+          <button id="createBarangayBtn">Add Barangay</button>
+          <span class="muted">Use this when onboarding a new Facebook Page.</span>
+        </div>
+      </section>
+      <footer class="page-footer">BrgyOS Owner Portal</footer>
+    </main>
+  </div>
+  <script src="/owner/app.js"></script>
+</body>
+</html>

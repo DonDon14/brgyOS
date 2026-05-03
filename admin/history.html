@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BrgyOS History</title>
+  <link rel="stylesheet" href="/admin/styles.css" />
+</head>
+<body>
+  <header class="topbar"><div><div class="brand">BrgyOS</div><div class="topbar-subtitle">Barangay service desk</div></div><div class="portal-tag">Staff Portal</div></header>
+  <div class="layout">
+    <aside class="sidenav">
+      <h3>Barangay Portal</h3>
+      <a class="nav-link" href="/admin/">Dashboard</a>
+      <a class="nav-link" href="/admin/requests.html">Request Queue</a>
+      <a class="nav-link active" href="/admin/history.html">History</a>
+      <a class="nav-link" href="/admin/exports.html">Exports</a>
+    </aside>
+    <main class="wrap">
+      <header class="page-heading hero-panel compact-hero">
+        <div>
+          <span class="eyebrow">Completed Work</span>
+          <h1>Processed History</h1>
+          <p>Review PDF-ready and released requests with their activity timeline.</p>
+        </div>
+      </header>
+      <section class="auth card">
+        <label for="adminKey">Staff Access Key</label>
+        <input id="adminKey" type="password" placeholder="Paste staff access key" />
+        <button id="saveKeyBtn">Unlock</button>
+      </section>
+      <section class="toolbar card">
+        <label for="barangayFilter">Barangay<select id="barangayFilter"></select></label>
+        <button id="refreshBtn">Refresh</button>
+        <span id="msg"></span>
+      </section>
+      <section class="card table-card">
+        <table>
+          <thead><tr><th>Reference</th><th>Name</th><th>Status</th><th>Updated</th></tr></thead>
+          <tbody id="historyRows"></tbody>
+        </table>
+      </section>
+      <footer class="page-footer">BrgyOS Barangay Portal</footer>
+    </main>
+  </div>
+  <dialog id="requestModal">
+    <article>
+      <h3 id="modalTitle">Request Details</h3>
+      <div id="modalBody" class="detail-grid"></div>
+      <p><a id="modalPdfLink" href="#" target="_blank" rel="noreferrer">Open PDF</a></p>
+      <h4>Timeline</h4>
+      <ul id="modalTimeline"></ul>
+      <button id="closeModalBtn">Close</button>
+    </article>
+  </dialog>
+  <script src="/admin/app.js"></script>
+</body>
+</html>

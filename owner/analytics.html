@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Owner - Token Health</title>
+  <link rel="stylesheet" href="/owner/styles.css" />
+</head>
+<body>
+  <header class="topbar"><div><div class="brand">BrgyOS</div><div class="topbar-subtitle">Pilot control center</div></div><div class="portal-tag">Owner Portal</div></header>
+  <div class="layout">
+    <aside class="sidenav">
+      <h3>Owner Portal</h3>
+      <a class="nav-link" href="/owner/">Dashboard</a>
+      <a class="nav-link" href="/owner/barangays.html">Barangays</a>
+      <a class="nav-link" href="/owner/staff.html">Staff</a>
+      <a class="nav-link" href="/owner/settings.html">Connection Setup</a>
+      <a class="nav-link active" href="/owner/analytics.html">Token Health</a>
+    </aside>
+    <main class="wrap">
+      <header class="page-heading hero-panel compact-hero">
+        <div>
+          <span class="eyebrow">Messenger Reliability</span>
+          <h1>Token Health</h1>
+          <p>Check whether Facebook Page tokens need attention.</p>
+        </div>
+      </header>
+      <section class="card auth">
+        <label for="ownerKey">Owner Access Key</label>
+        <input id="ownerKey" type="password" placeholder="Paste owner access key" />
+        <button id="saveKeyBtn">Unlock</button>
+        <button id="refreshAlertsBtn" class="secondary" type="button">Refresh</button>
+        <span id="msg"></span>
+      </section>
+      <section class="card table-card">
+        <h2>Connection Alerts</h2>
+        <table>
+          <thead><tr><th>Barangay</th><th>Status</th><th>Message</th><th>At</th></tr></thead>
+          <tbody id="alertRows"></tbody>
+        </table>
+      </section>
+      <footer class="page-footer">BrgyOS Owner Portal</footer>
+    </main>
+  </div>
+  <script src="/owner/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Owner - Staff</title>
+  <link rel="stylesheet" href="/owner/styles.css" />
+</head>
+<body>
+  <header class="topbar"><div><div class="brand">BrgyOS</div><div class="topbar-subtitle">Pilot control center</div></div><div class="portal-tag">Owner Portal</div></header>
+  <div class="layout">
+    <aside class="sidenav">
+      <h3>Owner Portal</h3>
+      <a class="nav-link" href="/owner/">Dashboard</a>
+      <a class="nav-link" href="/owner/barangays.html">Barangays</a>
+      <a class="nav-link active" href="/owner/staff.html">Staff</a>
+      <a class="nav-link" href="/owner/settings.html">Connection Setup</a>
+      <a class="nav-link" href="/owner/analytics.html">Token Health</a>
+    </aside>
+    <main class="wrap">
+      <header class="page-heading hero-panel compact-hero">
+        <div>
+          <span class="eyebrow">People and Access</span>
+          <h1>Staff</h1>
+          <p>Create staff records and connect Messenger PSIDs for request processing.</p>
+        </div>
+      </header>
+      <section class="card auth">
+        <label for="ownerKey">Owner Access Key</label>
+        <input id="ownerKey" type="password" placeholder="Paste owner access key" />
+        <button id="saveKeyBtn">Unlock</button>
+        <span id="msg"></span>
+      </section>
+      <section class="card form-card">
+        <h2>Add Staff</h2>
+        <div class="grid">
+          <label>Staff ID<input id="staffId" placeholder="juan-staff" /></label>
+          <label>Name<input id="staffName" placeholder="Juan Dela Cruz" /></label>
+          <label>Barangay<select id="staffBarangay"></select></label>
+          <label>Role<select id="staffRole">
+            <option value="staff">staff</option>
+            <option value="barangay_admin">barangay_admin</option>
+            <option value="owner">owner</option>
+          </select></label>
+          <label>Messenger PSID<input id="staffPsid" placeholder="Messenger PSID" /></label>
+        </div>
+        <div class="form-actions">
+          <button id="createStaffBtn">Add Staff</button>
+          <span class="muted">PSID is needed only for Messenger staff commands.</span>
+        </div>
+      </section>
+      <section class="card table-card">
+        <h2>Staff List</h2>
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Barangay</th><th>PSID</th><th>Status</th></tr></thead>
+          <tbody id="staffRows"></tbody>
+        </table>
+      </section>
+      <footer class="page-footer">BrgyOS Owner Portal</footer>
+    </main>
+  </div>
+  <script src="/owner/app.js"></script>
+</body>
+</html>

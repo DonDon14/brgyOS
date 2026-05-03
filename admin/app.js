@@ -14,37 +14,45 @@ const modalBody = document.getElementById("modalBody");
 const modalTimeline = document.getElementById("modalTimeline");
 const modalPdfLink = document.getElementById("modalPdfLink");
 const closeModalBtn = document.getElementById("closeModalBtn");
+const snapshotText = document.getElementById("snapshotText");
+const pendingCount = document.getElementById("pendingCount");
+const approvedCount = document.getElementById("approvedCount");
+const pdfReadyCount = document.getElementById("pdfReadyCount");
+const releasedCount = document.getElementById("releasedCount");
 let currentItems = [];
-let currentBarangays = [];
 
-adminKeyInput.value = localStorage.getItem("brgyos_admin_key") || "";
-
-saveKeyBtn.addEventListener("click", () => {
-  localStorage.setItem("brgyos_admin_key", adminKeyInput.value.trim());
-  setMsg("Admin key saved.");
-  loadRequests();
-});
-
-refreshBtn.addEventListener("click", loadRequests);
-filter.addEventListener("change", loadRequests);
-barangayFilter.addEventListener("change", loadRequests);
-exportBtn.addEventListener("click", downloadCsv);
-backupBtn.addEventListener("click", downloadBackup);
-closeModalBtn.addEventListener("click", () => requestModal.close());
-wireNavLinks();
-
-function getAdminKey() {
-  return localStorage.getItem("brgyos_admin_key") || "";
+if (adminKeyInput) {
+  adminKeyInput.value = localStorage.getItem("brgyos_staff_key") || localStorage.getItem("brgyos_admin_key") || "";
 }
 
-function setMsg(text) {
+if (saveKeyBtn) {
+  saveKeyBtn.addEventListener("click", () => {
+    localStorage.setItem("brgyos_staff_key", (adminKeyInput?.value || "").trim());
+    setMsg("Access key saved for this browser.");
+    loadPageData();
+  });
+}
+
+if (refreshBtn) refreshBtn.addEventListener("click", loadRequests);
+if (filter) filter.addEventListener("change", loadRequests);
+if (barangayFilter) barangayFilter.addEventListener("change", loadRequests);
+if (exportBtn) exportBtn.addEventListener("click", () => downloadFile("/api/admin/export.csv", "brgyos-requests.csv"));
+if (backupBtn) backupBtn.addEventListener("click", () => downloadFile("/api/admin/backup.json", "brgyos-backup.json"));
+if (closeModalBtn && requestModal) closeModalBtn.addEventListener("click", () => requestModal.close());
+
+function getAdminKey() {
+  return localStorage.getItem("brgyos_staff_key") || localStorage.getItem("brgyos_admin_key") || "";
+}
+
+function setMsg(text, tone = "") {
+  if (!msg) return;
   msg.textContent = text;
+  msg.dataset.tone = tone;
 }
 
 async function api(path, options = {}) {
-  const key = getAdminKey();
   const headers = Object.assign({}, options.headers || {}, {
-    "x-admin-key": key,
+    "x-admin-key": getAdminKey(),
     "Content-Type": "application/json",
   });
 
@@ -61,171 +69,285 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleString();
 }
 
-function actionButtons(item) {
-  const buttons = [];
-
-  if (item.status === "PENDING_APPROVAL") {
-    buttons.push(`<button data-action="approve" data-id="${item.id}">Approve</button>`);
-  }
-  if (item.status === "APPROVED") {
-    buttons.push(`<button data-action="pdf" data-id="${item.id}">Generate PDF</button>`);
-  }
-  if (item.status === "PDF_GENERATED") {
-    buttons.push(`<button data-action="release" data-id="${item.id}">Release</button>`);
-  }
-  if (item.pdfUrl) {
-    buttons.push(`<a class="secondary-link" href="${item.pdfUrl}" target="_blank" rel="noreferrer">Open PDF</a>`);
-  }
-
-  return `<div class="actions">${buttons.join("")}</div>`;
+function statusLabel(status) {
+  const labels = {
+    PENDING_APPROVAL: "Pending review",
+    APPROVED: "Approved",
+    PDF_GENERATED: "PDF ready",
+    RELEASED: "Released",
+  };
+  return labels[status] || status || "-";
 }
 
-function render(items) {
-  currentItems = items;
-  rows.innerHTML = items
-    .map(
-      (item) => `
-      <tr data-id="${item.id}" class="clickable-row">
-        <td><button data-open="${item.id}" class="link-btn">${item.id}</button></td>
-        <td>${item.fullName || "-"}</td>
-        <td>${item.documentType || "-"}</td>
-        <td>${item.address || "-"}</td>
-        <td class="status">${item.status}</td>
-        <td>${fmtDate(item.updatedAt)}</td>
-        <td>${actionButtons(item)}</td>
-      </tr>
-    `
-    )
-    .join("");
-  historyRows.innerHTML = items
-    .filter((item) => item.status === "PDF_GENERATED" || item.status === "RELEASED")
-    .map(
-      (item) => `
-      <tr data-id="${item.id}" class="clickable-row">
-        <td><button data-open="${item.id}" class="link-btn">${item.id}</button></td>
-        <td>${item.fullName || "-"}</td>
-        <td>${item.status}</td>
-        <td>${fmtDate(item.updatedAt)}</td>
-      </tr>
-    `
-    )
-    .join("");
+function clearNode(node) {
+  if (!node) return;
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
 
-  rows.querySelectorAll("button[data-action]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const id = btn.dataset.id;
-      const action = btn.dataset.action;
-      try {
-        setMsg(`Processing ${action} for ${id}...`);
-        await api(`/api/admin/requests/${id}/${action}`, { method: "POST" });
-        setMsg(`Done: ${action} ${id}`);
-        await loadRequests();
-      } catch (error) {
-        setMsg(error.message);
-      }
-    });
-  });
+function td(text, className = "") {
+  const cell = document.createElement("td");
+  cell.textContent = text || "-";
+  if (className) cell.className = className;
+  return cell;
+}
 
-  document.querySelectorAll("button[data-open]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const id = btn.dataset.open;
-      const item = currentItems.find((x) => x.id === id);
-      if (!item) return;
-      openModal(item);
-    });
-  });
+function makeStatusBadge(status) {
+  const badge = document.createElement("span");
+  badge.className = `status-badge status-${String(status || "unknown").toLowerCase()}`;
+  badge.textContent = statusLabel(status);
+  return badge;
+}
+
+function makeOpenButton(item) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "link-btn";
+  btn.textContent = item.id || "Open";
+  btn.addEventListener("click", () => openModal(item));
+  return btn;
+}
+
+function appendActions(container, item) {
+  const actions = document.createElement("div");
+  actions.className = "actions";
+
+  const actionMap = {
+    PENDING_APPROVAL: { label: "Approve", action: "approve" },
+    APPROVED: { label: "Generate PDF", action: "pdf" },
+    PDF_GENERATED: { label: "Mark Released", action: "release" },
+  };
+
+  const nextAction = actionMap[item.status];
+  if (nextAction) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = nextAction.label;
+    btn.addEventListener("click", () => runRequestAction(item.id, nextAction.action, btn));
+    actions.appendChild(btn);
+  }
+
+  if (item.pdfUrl) {
+    const link = document.createElement("a");
+    link.className = "secondary-link";
+    link.href = item.pdfUrl;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = "Open PDF";
+    actions.appendChild(link);
+  }
+
+  if (!actions.childElementCount) {
+    const done = document.createElement("span");
+    done.className = "muted";
+    done.textContent = "No action needed";
+    actions.appendChild(done);
+  }
+
+  container.appendChild(actions);
+}
+
+async function runRequestAction(id, action, button) {
+  if (action === "release" && !window.confirm(`Mark ${id} as released?`)) return;
+  try {
+    button.disabled = true;
+    setMsg(`Processing ${statusLabel(action).toLowerCase()} for ${id}...`);
+    await api(`/api/admin/requests/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+    await loadRequests();
+    setMsg(`Updated ${id}.`, "success");
+  } catch (error) {
+    button.disabled = false;
+    setMsg(error.message, "error");
+  }
+}
+
+function addDetail(container, label, value) {
+  const row = document.createElement("div");
+  row.className = "detail-row";
+  const labelEl = document.createElement("span");
+  labelEl.textContent = label;
+  const valueEl = document.createElement("strong");
+  valueEl.textContent = value || "-";
+  row.append(labelEl, valueEl);
+  container.appendChild(row);
 }
 
 function openModal(item) {
+  if (!requestModal || !modalTitle || !modalBody || !modalTimeline || !modalPdfLink) return;
   modalTitle.textContent = `Request ${item.id}`;
-  modalBody.textContent =
-    `Name: ${item.fullName || "-"}\n` +
-    `Document: ${item.documentType || "-"}\n` +
-    `Address: ${item.address || "-"}\n` +
-    `Purpose: ${item.purpose || "-"}\n` +
-    `Pickup Date: ${item.pickupDate || "-"}\n` +
-    `Status: ${item.status}\n` +
-    `Fee: PHP ${item.serviceFee || "-"}`;
+  clearNode(modalBody);
+  addDetail(modalBody, "Resident", item.fullName);
+  addDetail(modalBody, "Document", item.documentType);
+  addDetail(modalBody, "Address", item.address);
+  addDetail(modalBody, "Purpose", item.purpose);
+  addDetail(modalBody, "Pickup date", item.pickupDate);
+  addDetail(modalBody, "Status", statusLabel(item.status));
 
   if (item.pdfUrl) {
     modalPdfLink.href = item.pdfUrl;
     modalPdfLink.style.display = "inline-block";
   } else {
-    modalPdfLink.href = "#";
+    modalPdfLink.removeAttribute("href");
     modalPdfLink.style.display = "none";
   }
 
+  clearNode(modalTimeline);
   const history = Array.isArray(item.history) ? item.history : [];
-  modalTimeline.innerHTML = history
-    .map((h) => `<li><strong>${fmtDate(h.at)}</strong> - ${h.action} (${h.note || "No note"})</li>`)
-    .join("");
+  if (!history.length) {
+    const empty = document.createElement("li");
+    empty.textContent = "No timeline yet.";
+    modalTimeline.appendChild(empty);
+  }
+  for (const h of history) {
+    const li = document.createElement("li");
+    const at = document.createElement("strong");
+    at.textContent = fmtDate(h.at);
+    li.append(at, document.createTextNode(` - ${statusLabel(h.action)} (${h.note || "No note"})`));
+    modalTimeline.appendChild(li);
+  }
 
   requestModal.showModal();
 }
 
+function renderRequestRows(target, items, mode) {
+  clearNode(target);
+  if (!target) return;
+
+  const visibleItems = mode === "history"
+    ? items.filter((item) => item.status === "PDF_GENERATED" || item.status === "RELEASED")
+    : items;
+
+  if (!visibleItems.length) {
+    const tr = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = mode === "history" ? 4 : 7;
+    cell.className = "empty-state";
+    cell.textContent = mode === "history" ? "No processed requests yet." : "No requests match this view.";
+    tr.appendChild(cell);
+    target.appendChild(tr);
+    return;
+  }
+
+  for (const item of visibleItems) {
+    const tr = document.createElement("tr");
+    const refCell = document.createElement("td");
+    refCell.appendChild(makeOpenButton(item));
+    tr.appendChild(refCell);
+
+    if (mode === "history") {
+      tr.append(td(item.fullName));
+      const statusCell = document.createElement("td");
+      statusCell.appendChild(makeStatusBadge(item.status));
+      tr.appendChild(statusCell);
+      tr.append(td(fmtDate(item.updatedAt)));
+    } else {
+      tr.append(td(item.fullName));
+      tr.append(td(item.documentType));
+      tr.append(td(item.pickupDate || item.address));
+      const statusCell = document.createElement("td");
+      statusCell.appendChild(makeStatusBadge(item.status));
+      tr.appendChild(statusCell);
+      tr.append(td(fmtDate(item.updatedAt)));
+      const actionCell = document.createElement("td");
+      appendActions(actionCell, item);
+      tr.appendChild(actionCell);
+    }
+    target.appendChild(tr);
+  }
+}
+
+function render(items) {
+  currentItems = items;
+  if (rows) renderRequestRows(rows, items, "queue");
+  if (historyRows) renderRequestRows(historyRows, items, "history");
+
+  if (snapshotText) {
+    const pending = items.filter((i) => i.status === "PENDING_APPROVAL").length;
+    const approved = items.filter((i) => i.status === "APPROVED").length;
+    const ready = items.filter((i) => i.status === "PDF_GENERATED").length;
+    const done = items.filter((i) => i.status === "RELEASED").length;
+    snapshotText.textContent = `Pending review: ${pending} | Approved: ${approved} | PDF ready: ${ready} | Released: ${done} | Total: ${items.length}`;
+    if (pendingCount) pendingCount.textContent = pending;
+    if (approvedCount) approvedCount.textContent = approved;
+    if (pdfReadyCount) pdfReadyCount.textContent = ready;
+    if (releasedCount) releasedCount.textContent = done;
+  }
+}
+
 async function loadRequests() {
+  const status = filter ? filter.value : "ALL";
+  const barangayId = barangayFilter ? barangayFilter.value || "" : "";
   try {
-    const status = filter.value;
-    const barangayId = barangayFilter.value || "";
     setMsg("Loading requests...");
     const result = await api(`/api/admin/requests?status=${encodeURIComponent(status)}&barangayId=${encodeURIComponent(barangayId)}`);
-    render(result.data || []);
-    setMsg(`Loaded ${result.data.length} request(s).`);
+    const items = result.data || [];
+    render(items);
+    setMsg(`Loaded ${items.length} request(s).`, "success");
   } catch (error) {
-    rows.innerHTML = "";
-    setMsg(error.message);
+    if (rows) clearNode(rows);
+    if (historyRows) clearNode(historyRows);
+    render([]);
+    setMsg(error.message, "error");
   }
 }
 
-async function downloadCsv() {
-  const key = getAdminKey();
-  if (!key) {
-    setMsg("Set admin key first.");
-    return;
+async function downloadFile(path, fallbackName) {
+  if (!getAdminKey()) return setMsg("Enter and save the staff access key first.", "error");
+  const barangayId = barangayFilter ? barangayFilter.value || "" : "";
+  const url = path.includes("?")
+    ? `${path}&barangayId=${encodeURIComponent(barangayId)}`
+    : `${path}?barangayId=${encodeURIComponent(barangayId)}`;
+  try {
+    setMsg("Preparing download...");
+    const response = await fetch(url, { headers: { "x-admin-key": getAdminKey() } });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || `Download failed: ${response.status}`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const fileName = disposition.match(/filename="([^"]+)"/)?.[1] || fallbackName;
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    setMsg("Download ready.", "success");
+  } catch (error) {
+    setMsg(error.message, "error");
   }
-  const barangayId = barangayFilter.value || "";
-  window.open(`/api/admin/export.csv?key=${encodeURIComponent(key)}&barangayId=${encodeURIComponent(barangayId)}`, "_blank");
-}
-
-async function downloadBackup() {
-  const key = getAdminKey();
-  if (!key) {
-    setMsg("Set admin key first.");
-    return;
-  }
-  window.open(`/api/admin/backup.json?key=${encodeURIComponent(key)}`, "_blank");
 }
 
 async function loadBarangays() {
+  if (!barangayFilter) return;
   try {
-    const result = await api("/api/owner/barangays");
-    currentBarangays = result.data || [];
-    barangayFilter.innerHTML = `<option value="">All</option>${currentBarangays
-      .map((b) => `<option value="${b.id}">${b.name || b.id}</option>`)
-      .join("")}`;
-  } catch (_error) {
-    barangayFilter.innerHTML = `<option value="">All</option>`;
+    const result = await api("/api/admin/barangays");
+    const items = result.data || [];
+    clearNode(barangayFilter);
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "All barangays";
+    barangayFilter.appendChild(all);
+    for (const b of items) {
+      const option = document.createElement("option");
+      option.value = b.id;
+      option.textContent = b.name || b.id;
+      barangayFilter.appendChild(option);
+    }
+  } catch {
+    clearNode(barangayFilter);
+    const fallback = document.createElement("option");
+    fallback.value = "";
+    fallback.textContent = "All barangays";
+    barangayFilter.appendChild(fallback);
   }
 }
 
-async function init() {
+async function loadPageData() {
   await loadBarangays();
-  await loadRequests();
+  if (rows || historyRows || snapshotText) await loadRequests();
 }
 
-function wireNavLinks() {
-  document.querySelectorAll(".nav-link[href^='#']").forEach((link) => {
-    const target = document.querySelector(link.getAttribute("href"));
-    if (!target) {
-      link.classList.add("disabled");
-      link.addEventListener("click", (e) => e.preventDefault());
-      return;
-    }
-    link.addEventListener("click", (e) => {
-      e.preventDefault();
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  });
-}
-
-init();
+loadPageData();

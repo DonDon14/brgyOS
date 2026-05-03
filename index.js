@@ -15,7 +15,9 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-pro";
 const PORT = process.env.PORT || 1337;
 const SERVICE_FEE_PHP = 15;
-const ADMIN_DASHBOARD_KEY = process.env.ADMIN_DASHBOARD_KEY || "change-me";
+const LEGACY_DASHBOARD_KEY = process.env.ADMIN_DASHBOARD_KEY || "";
+const STAFF_DASHBOARD_KEY = process.env.STAFF_DASHBOARD_KEY || LEGACY_DASHBOARD_KEY;
+const OWNER_DASHBOARD_KEY = process.env.OWNER_DASHBOARD_KEY || LEGACY_DASHBOARD_KEY;
 const ADMIN_PSID_LIST = (process.env.ADMIN_PSID_LIST || "")
   .split(",")
   .map((value) => value.trim())
@@ -100,7 +102,7 @@ app.post("/webhook", async (req, res) => {
           } catch (error) {
             const code = error?.response?.data?.error?.code;
             if (code === 190 && barangay?.id) {
-              tokenAlerts.set(barangay.id, {
+              await setTokenAlert(barangay.id, {
                 status: "expired",
                 message: "Facebook Page token expired. Update token in barangay settings.",
                 at: new Date().toISOString(),
@@ -161,6 +163,14 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
     return promptForStep("awaiting_document", {}, detectedLang);
   }
 
+  if (!session.step && (/^(help|menu)$/i.test(text) || payload === "MENU")) {
+    return makeCustomerMenu(detectedLang);
+  }
+
+  if (!session.step && (/^cancel$/i.test(text) || payload === "CANCEL")) {
+    return makeCustomerMenu(detectedLang);
+  }
+
   if (session.step && (payload === "BACK" || /^back$/i.test(text))) {
     const previousStep = getPreviousStep(session.step);
     session.step = previousStep;
@@ -191,7 +201,10 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
       const request = await createRequest(normalizedDraft);
         userSessions.delete(senderId);
         logCommissionEvent(request);
-        return asText(localize(session.lang, "submitted", request.id));
+        return asQuickReply(localize(session.lang, "submitted", request.id), [
+          { title: localize(session.lang, "check_status"), payload: `STATUS_${request.id}` },
+          { title: localize(session.lang, "new_request"), payload: "START_REQUEST" },
+        ]);
       } catch (error) {
         console.error("Confirm request error:", error?.message || error);
         return asText("Sorry, naay temporary error sa pag-submit. Palihug try again pinaagi sa CONFIRM.");
@@ -199,6 +212,25 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
     }
 
     return asText(localize(session.lang, "confirm_or_cancel"));
+  }
+
+  if (/^STATUS_/i.test(payload)) {
+    const refId = payload.replace(/^STATUS_/i, "").toUpperCase();
+    return handleCustomerStatus(senderId, refId, detectedLang);
+  }
+
+  if (payload === "START_REQUEST") {
+    userSessions.set(senderId, {
+      step: "awaiting_document",
+      draft: { senderId, lang: detectedLang, barangayId: barangay?.id || "default" },
+      lang: detectedLang,
+    });
+    return promptForStep("awaiting_document", {}, detectedLang);
+  }
+
+  if (/^status(?:\s+|$)/i.test(text)) {
+    const refId = text.split(/\s+/)[1]?.toUpperCase();
+    return handleCustomerStatus(senderId, refId, detectedLang);
   }
 
   if (session.step) {
@@ -228,16 +260,6 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
       `User asks for guidance/info, not immediate form submission. Reply helpful and short, and offer to start request if needed. User: ${text}`
     );
     return asText(helpReply);
-  }
-
-  if (/status\s+/i.test(text)) {
-    const refId = text.split(/\s+/)[1]?.toUpperCase();
-    if (!refId) return asText("Use: STATUS BRGY-2026-0001");
-    const request = requests.get(refId);
-    if (!request || request.senderId !== senderId) {
-      return asText("No request found for that reference.");
-    }
-    return asText(formatCustomerStatus(request));
   }
 
   if (isDocumentIntent(text)) {
@@ -557,6 +579,55 @@ function makeStaffMenuQuickReply() {
   ]);
 }
 
+function makeCustomerMenu(lang = "tl") {
+  return asQuickReply(localize(lang, "menu_text"), [
+    { title: localize(lang, "new_request"), payload: "START_REQUEST" },
+    { title: localize(lang, "my_status"), payload: "STATUS_LATEST" },
+  ]);
+}
+
+function handleCustomerStatus(senderId, refId = "", lang = "tl") {
+  if (!refId || refId === "LATEST") {
+    const latest = [...requests.values()]
+      .filter((request) => request.senderId === senderId)
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime());
+
+    if (!latest.length) {
+      return asQuickReply(localize(lang, "no_requests"), [
+        { title: localize(lang, "new_request"), payload: "START_REQUEST" },
+      ]);
+    }
+
+    const top = latest.slice(0, 5);
+    return asQuickReply(
+      `${localize(lang, "status_header")}\n${top.map((request) => `${request.id}: ${formatStatusLabel(request.status)}`).join("\n")}`,
+      top.map((request) => ({ title: request.id.slice(-9), payload: `STATUS_${request.id}` }))
+    );
+  }
+
+  const request = requests.get(String(refId || "").toUpperCase());
+  if (!request || request.senderId !== senderId) {
+    return asQuickReply(localize(lang, "status_not_found"), [
+      { title: localize(lang, "my_status"), payload: "STATUS_LATEST" },
+      { title: localize(lang, "new_request"), payload: "START_REQUEST" },
+    ]);
+  }
+  return asQuickReply(formatCustomerStatus(request), [
+    { title: localize(lang, "my_status"), payload: "STATUS_LATEST" },
+    { title: localize(lang, "new_request"), payload: "START_REQUEST" },
+  ]);
+}
+
+function formatStatusLabel(status) {
+  const labels = {
+    PENDING_APPROVAL: "Pending review",
+    APPROVED: "Approved",
+    PDF_GENERATED: "PDF ready",
+    RELEASED: "Released",
+  };
+  return labels[status] || status || "Unknown";
+}
+
 function promptForStep(step, draft = {}, lang = "en") {
   if (step === "awaiting_document") {
     return asQuickReply(localize(lang, "ask_doc"), [
@@ -594,7 +665,7 @@ function promptForStep(step, draft = {}, lang = "en") {
         `Full Name: ${toTitleCase(draft.fullName || "")}\n` +
         `Address: ${toTitleCase(draft.address || "")}\n` +
         `Purpose: ${sentenceCase(draft.purpose || "")}\n` +
-      `Pickup Date: ${formatPickupDateForDisplay(draft.pickupDate)}\n` +
+        `Pickup Date: ${formatPickupDateForDisplay(draft.pickupDate)}\n` +
         `Service Fee: PHP ${SERVICE_FEE_PHP}`,
       [
         { title: localize(lang, "confirm"), payload: "CONFIRM" },
@@ -634,6 +705,7 @@ function applySessionInput(session, text, payload) {
 
   if (session.step === "awaiting_pickup_date") {
     session.draft.pickupDate = parsePickupDate(text, payload);
+    if (!isValidPickupDate(session.draft.pickupDate)) return;
     session.step = "awaiting_confirm";
   }
 }
@@ -673,7 +745,7 @@ function parsePickupDate(text, payload) {
   if (!Number.isNaN(parsed.getTime())) {
     return toPretty(parsed);
   }
-  return toTitleCase(raw);
+  return "";
 }
 
 function formatPickupDateForDisplay(value) {
@@ -702,8 +774,15 @@ function localize(lang, key, refId = "") {
       back: "Back",
       today: "Today",
       tomorrow: "Tomorrow",
+      check_status: "Check Status",
+      my_status: "My Status",
+      new_request: "New Request",
+      menu_text: "How can I help you today?",
+      status_header: "Here are your recent requests:",
+      status_not_found: "No request found for that reference. Please check the reference ID.",
+      no_requests: "No previous requests found for this Messenger account.",
       cancelled: "Request cancelled. Reply START anytime to create a new request.",
-      submitted: `Your request is submitted.\nReference ID: ${refId}\nStatus: PENDING APPROVAL\nYou will receive an update after barangay staff review.`,
+      submitted: `Your request is submitted.\nReference ID: ${refId}\nStatus: PENDING APPROVAL\nReply STATUS ${refId} anytime to check progress.`,
       confirm_or_cancel: "Reply CONFIRM to submit, or CANCEL to stop.",
     },
     tl: {
@@ -718,8 +797,15 @@ function localize(lang, key, refId = "") {
       back: "Back",
       today: "Today",
       tomorrow: "Tomorrow",
+      check_status: "Check Status",
+      my_status: "My Status",
+      new_request: "New Request",
+      menu_text: "Paano kita matutulungan ngayon?",
+      status_header: "Ito ang mga recent request mo:",
+      status_not_found: "Walang request na nakita sa reference na iyon. Pakisuri ang reference ID.",
+      no_requests: "Wala pang request na nakita para sa Messenger account na ito.",
       cancelled: "Nakansela ang request. I-type ang START kung gusto mong magsimula ulit.",
-      submitted: `Na-submit na ang request mo.\nReference ID: ${refId}\nStatus: PENDING APPROVAL\nMakakatanggap ka ng update pagkatapos ng staff review.`,
+      submitted: `Na-submit na ang request mo.\nReference ID: ${refId}\nStatus: PENDING APPROVAL\nI-reply ang STATUS ${refId} anytime para i-check ang progress.`,
       confirm_or_cancel: "I-reply ang CONFIRM para isumite, o CANCEL para itigil.",
     },
     ceb: {
@@ -734,8 +820,15 @@ function localize(lang, key, refId = "") {
       back: "Back",
       today: "Today",
       tomorrow: "Tomorrow",
+      check_status: "Check Status",
+      my_status: "My Status",
+      new_request: "New Request",
+      menu_text: "Unsa akong ikatabang karon?",
+      status_header: "Mao ni ang imong recent requests:",
+      status_not_found: "Walay request nga nakit-an para ana nga reference. Palihug i-check ang reference ID.",
+      no_requests: "Wala pay request nga nakita para ani nga Messenger account.",
       cancelled: "Nakanselar ang request. I-type ang START kung gusto ka magsugod usab.",
-      submitted: `Na-submit na ang imong request.\nReference ID: ${refId}\nStatus: PENDING APPROVAL\nMaka-receive ka og update human sa staff review.`,
+      submitted: `Na-submit na ang imong request.\nReference ID: ${refId}\nStatus: PENDING APPROVAL\nI-reply ang STATUS ${refId} anytime para i-check ang progress.`,
       confirm_or_cancel: "I-reply ang CONFIRM para isumite, o CANCEL para undang.",
     },
   };
@@ -819,6 +912,17 @@ function normalizePickupDate(value) {
   return v;
 }
 
+function isValidPickupDate(value) {
+  const v = String(value || "").trim();
+  if (!v) return false;
+  const parsed = new Date(v);
+  if (Number.isNaN(parsed.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  parsed.setHours(0, 0, 0, 0);
+  return parsed.getTime() >= today.getTime();
+}
+
 function validateDraft(draft) {
   if (!draft.documentType) return "Document type is required. Please go back and select a document.";
   if (!draft.fullName || draft.fullName.trim().length < 5) {
@@ -830,8 +934,8 @@ function validateDraft(draft) {
   if (!draft.purpose || draft.purpose.trim().length < 3) {
     return "Please provide a valid purpose.";
   }
-  if (!draft.pickupDate || draft.pickupDate.trim().length < 4) {
-    return "Please provide a valid pickup date.";
+  if (!draft.pickupDate || draft.pickupDate.trim().length < 4 || !isValidPickupDate(draft.pickupDate)) {
+    return "Please provide a valid pickup date, like Today, Tomorrow, or May 8.";
   }
   return "";
 }
@@ -962,21 +1066,39 @@ async function bootstrapData() {
   if (isFirestoreConfigured()) {
     await loadFromFirestore();
   } else {
-    loadRequestsFromDisk();
+    loadPilotDataFromDisk();
   }
 }
 
-function loadRequestsFromDisk() {
+function loadPilotDataFromDisk() {
   if (!fs.existsSync(REQUESTS_FILE)) return;
   try {
     const data = JSON.parse(fs.readFileSync(REQUESTS_FILE, "utf8"));
-    const items = Array.isArray(data.requests) ? data.requests : [];
-    for (const item of items) {
+    const requestItems = Array.isArray(data.requests) ? data.requests : [];
+    const barangayItems = Array.isArray(data.barangays) ? data.barangays : [];
+    const staffItems = Array.isArray(data.staff) ? data.staff : [];
+    const alertEntries = data.tokenAlerts && typeof data.tokenAlerts === "object" ? Object.entries(data.tokenAlerts) : [];
+
+    requests.clear();
+    barangays.clear();
+    staffMembers.clear();
+    tokenAlerts.clear();
+
+    for (const item of requestItems) {
       requests.set(item.id, item);
     }
-    requestCounter = Number(data.requestCounter || items.length + 1);
+    for (const item of barangayItems) {
+      if (item?.id) barangays.set(item.id, item);
+    }
+    for (const item of staffItems) {
+      if (item?.id) staffMembers.set(item.id, item);
+    }
+    for (const [barangayId, alert] of alertEntries) {
+      tokenAlerts.set(barangayId, alert);
+    }
+    requestCounter = Number(data.requestCounter || requestItems.length + 1);
   } catch (error) {
-    console.error("Failed to load requests from disk:", error.message);
+    console.error("Failed to load pilot data from disk:", error.message);
   }
 }
 
@@ -988,10 +1110,11 @@ async function loadFromFirestore() {
   barangays.clear();
   staffMembers.clear();
 
-  const [rqSnap, brgySnap, staffSnap] = await Promise.all([
+  const [rqSnap, brgySnap, staffSnap, alertSnap] = await Promise.all([
     db.collection("requests").get(),
     db.collection("barangays").get(),
     db.collection("staff").get(),
+    db.collection("token_alerts").get(),
   ]);
 
   rqSnap.forEach((docRef) => {
@@ -1005,6 +1128,9 @@ async function loadFromFirestore() {
   staffSnap.forEach((docRef) => {
     const s = docRef.data();
     if (s?.id) staffMembers.set(s.id, s);
+  });
+  alertSnap.forEach((docRef) => {
+    tokenAlerts.set(docRef.id, docRef.data());
   });
 
   if (!barangays.size) {
@@ -1043,16 +1169,15 @@ async function persistRequests() {
     await batch.commit();
     return;
   }
-  const payload = {
-    requestCounter,
-    requests: [...requests.values()],
-  };
-  fs.writeFileSync(REQUESTS_FILE, JSON.stringify(payload, null, 2), "utf8");
+  writePilotDataToDisk();
 }
 
 async function persistBarangays() {
   const db = getFirestoreDb();
-  if (!db) return;
+  if (!db) {
+    writePilotDataToDisk();
+    return;
+  }
   const batch = db.batch();
   for (const barangay of barangays.values()) {
     batch.set(db.collection("barangays").doc(barangay.id), barangay, { merge: true });
@@ -1062,12 +1187,44 @@ async function persistBarangays() {
 
 async function persistStaffMembers() {
   const db = getFirestoreDb();
-  if (!db) return;
+  if (!db) {
+    writePilotDataToDisk();
+    return;
+  }
   const batch = db.batch();
   for (const staff of staffMembers.values()) {
     batch.set(db.collection("staff").doc(staff.id), staff, { merge: true });
   }
   await batch.commit();
+}
+
+async function persistTokenAlerts() {
+  const db = getFirestoreDb();
+  if (!db) {
+    writePilotDataToDisk();
+    return;
+  }
+  const batch = db.batch();
+  for (const [barangayId, alert] of tokenAlerts.entries()) {
+    batch.set(db.collection("token_alerts").doc(barangayId), { ...alert, id: barangayId }, { merge: true });
+  }
+  await batch.commit();
+}
+
+async function setTokenAlert(barangayId, alert) {
+  tokenAlerts.set(barangayId, alert);
+  await persistTokenAlerts();
+}
+
+function writePilotDataToDisk() {
+  const payload = {
+    requestCounter,
+    requests: [...requests.values()],
+    barangays: [...barangays.values()],
+    staff: [...staffMembers.values()],
+    tokenAlerts: Object.fromEntries(tokenAlerts.entries()),
+  };
+  fs.writeFileSync(REQUESTS_FILE, JSON.stringify(payload, null, 2), "utf8");
 }
 
 async function writeAuditLog(action, actorId, request) {
@@ -1094,54 +1251,59 @@ function resolveBarangayByPageId(pageId) {
 async function generateDocumentPdf(request) {
   const fileName = `${request.id}.pdf`;
   const filePath = path.join(PDF_DIR, fileName);
-  const doc = new PDFDocument({ size: "A4", margin: 50 });
+  const barangay = barangays.get(request.barangayId || "default") || resolveBarangayByPageId("");
+  const barangayName = barangay?.name || "Barangay";
+  const municipality = barangay?.municipality || "Municipality";
+  const province = barangay?.province || "Province";
+  const captainName = (barangay?.captainName || "Barangay Captain").toUpperCase();
+  const secretaryName = (barangay?.secretaryName || "Barangay Secretary").toUpperCase();
+  const logoImage = await resolveLogoImage(barangay?.logoUrl || "");
+  const issueDate = new Date().toLocaleDateString("en-PH", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "Asia/Manila",
+  });
+  const doc = new PDFDocument({ size: "A4", margin: 54 });
   const writeStream = fs.createWriteStream(filePath);
 
   await new Promise((resolve, reject) => {
     doc.pipe(writeStream);
 
-    const issueDate = new Date().toLocaleDateString("en-PH", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      timeZone: "Asia/Manila",
+    drawDocumentHeader(doc, {
+      logoImage,
+      barangayName,
+      municipality,
+      province,
     });
 
-    const barangay = barangays.get(request.barangayId || "default") || resolveBarangayByPageId("");
-    const barangayName = barangay?.name || "Barangay";
-    const municipality = barangay?.municipality || "Municipality";
-    const province = barangay?.province || "Province";
-    const captainName = (barangay?.captainName || "Barangay Captain").toUpperCase();
-    const secretaryName = (barangay?.secretaryName || "Barangay Secretary").toUpperCase();
-
-    doc.fontSize(11).text("Republic of the Philippines", { align: "center" });
-    doc.fontSize(11).text(`Province of ${province}`, { align: "center" });
-    doc.fontSize(11).text(`Municipality of ${municipality}`, { align: "center" });
-    doc.fontSize(12).text(barangayName, { align: "center" });
-    doc.moveDown(1.2);
-
     const template = buildDocumentTemplate(request, issueDate, barangayName, municipality, province);
-    doc.font("Helvetica-Bold").fontSize(15).text(template.title, { align: "center" });
-    doc.moveDown(1.2);
-    doc.font("Helvetica").fontSize(12).text(template.body, {
+    doc.moveDown(1.4);
+    doc.font("Helvetica-Bold").fontSize(16).text(template.title, { align: "center", underline: false });
+    doc.moveDown(0.3);
+    doc.moveTo(180, doc.y).lineTo(415, doc.y).strokeColor("#555555").lineWidth(0.6).stroke();
+    doc.moveDown(1.5);
+
+    doc.font("Helvetica").fontSize(12).fillColor("#111111").text(template.body, {
       align: "justify",
-      lineGap: 3,
+      lineGap: 4,
       indent: 18,
     });
 
-    doc.moveDown(1.2);
+    doc.moveDown(1.4);
     doc.font("Helvetica").fontSize(11).text(`Issued this ${issueDate} at ${barangayName}, ${municipality}, ${province}.`);
-    doc.moveDown(2);
+    doc.moveDown(2.4);
 
-    doc.font("Helvetica-Bold").fontSize(11).text(captainName, 70);
-    doc.font("Helvetica").fontSize(10).text("Punong Barangay / Barangay Captain", 70);
+    const signatureY = doc.y + 16;
+    doc.moveTo(72, signatureY).lineTo(245, signatureY).strokeColor("#777777").lineWidth(0.5).stroke();
+    doc.moveTo(350, signatureY).lineTo(523, signatureY).strokeColor("#777777").lineWidth(0.5).stroke();
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("#111111").text(captainName, 72, signatureY + 7, { width: 173, align: "center" });
+    doc.font("Helvetica").fontSize(9).fillColor("#555555").text("Punong Barangay / Barangay Captain", 72, doc.y + 1, { width: 173, align: "center" });
 
-    doc.font("Helvetica-Bold").fontSize(11).text(secretaryName, 340, doc.y - 26);
-    doc.font("Helvetica").fontSize(10).text("Barangay Secretary", 340);
+    doc.font("Helvetica-Bold").fontSize(11).fillColor("#111111").text(secretaryName, 350, signatureY + 7, { width: 173, align: "center" });
+    doc.font("Helvetica").fontSize(9).fillColor("#555555").text("Barangay Secretary", 350, doc.y + 1, { width: 173, align: "center" });
 
-    doc.moveDown(2.2);
-    doc.font("Helvetica").fontSize(9).text(`Reference No.: ${request.id}`);
-    // Address is already embedded in certificate body; keep footer concise.
+    drawDocumentFooter(doc, request);
     doc.end();
 
     writeStream.on("finish", resolve);
@@ -1153,6 +1315,68 @@ async function generateDocumentPdf(request) {
     return `${baseUrl.replace(/\/$/, "")}/files/${fileName}`;
   }
   return `PDF generated on server: /files/${fileName}`;
+}
+
+async function resolveLogoImage(logoUrl) {
+  const value = String(logoUrl || "").trim();
+  if (!value) return null;
+  try {
+    if (/^https?:\/\//i.test(value)) {
+      const response = await axios.get(value, { responseType: "arraybuffer", timeout: 7000 });
+      const type = String(response.headers["content-type"] || "");
+      if (!/image\/(png|jpeg|jpg)/i.test(type)) return null;
+      return Buffer.from(response.data);
+    }
+    const logoPath = path.isAbsolute(value) ? value : path.join(__dirname, value);
+    if (fs.existsSync(logoPath)) return fs.readFileSync(logoPath);
+  } catch (error) {
+    console.error("Logo load failed:", error?.message || error);
+  }
+  return null;
+}
+
+function drawDocumentHeader(doc, { logoImage, barangayName, municipality, province }) {
+  doc.save();
+  doc.rect(36, 36, 523, 770).strokeColor("#d7dce5").lineWidth(1).stroke();
+  doc.rect(42, 42, 511, 758).strokeColor("#eef1f5").lineWidth(0.6).stroke();
+
+  if (logoImage) {
+    try {
+      doc.image(logoImage, 66, 58, { fit: [70, 70], align: "center", valign: "center" });
+    } catch (_error) {
+      drawSealPlaceholder(doc, 101, 93);
+    }
+  } else {
+    drawSealPlaceholder(doc, 101, 93);
+  }
+
+  doc.fillColor("#111111").font("Helvetica").fontSize(10.5).text("Republic of the Philippines", 152, 58, { width: 292, align: "center" });
+  doc.fontSize(10.5).text(`Province of ${province}`, { width: 292, align: "center" });
+  doc.fontSize(10.5).text(`Municipality of ${municipality}`, { width: 292, align: "center" });
+  doc.moveDown(0.2);
+  doc.font("Helvetica-Bold").fontSize(13).text(barangayName.toUpperCase(), { width: 292, align: "center" });
+  doc.font("Helvetica").fontSize(9.5).fillColor("#555555").text("Office of the Punong Barangay", { width: 292, align: "center" });
+
+  doc.moveTo(66, 144).lineTo(529, 144).strokeColor("#9aa4b2").lineWidth(0.8).stroke();
+  doc.restore();
+  doc.y = 164;
+}
+
+function drawSealPlaceholder(doc, centerX, centerY) {
+  doc.save();
+  doc.circle(centerX, centerY, 34).strokeColor("#98a2b3").lineWidth(1).stroke();
+  doc.font("Helvetica-Bold").fontSize(9).fillColor("#667085").text("BRGY", centerX - 20, centerY - 8, { width: 40, align: "center" });
+  doc.font("Helvetica").fontSize(7).text("SEAL", centerX - 20, centerY + 4, { width: 40, align: "center" });
+  doc.restore();
+}
+
+function drawDocumentFooter(doc, request) {
+  const footerY = 742;
+  doc.save();
+  doc.moveTo(66, footerY).lineTo(529, footerY).strokeColor("#d0d5dd").lineWidth(0.6).stroke();
+  doc.font("Helvetica").fontSize(8.5).fillColor("#667085").text(`Reference No.: ${request.id}`, 66, footerY + 10, { width: 220 });
+  doc.text(`Generated by BrgyOS on ${new Date().toLocaleString("en-PH", { timeZone: "Asia/Manila" })}`, 298, footerY + 10, { width: 230, align: "right" });
+  doc.restore();
 }
 
 function buildDocumentTemplate(request, issueDate, barangayName, municipality, province) {
@@ -1207,7 +1431,7 @@ async function notifyCustomer(recipientId, text, barangayId = "") {
   } catch (error) {
     const code = error?.response?.data?.error?.code;
     if (code === 190 && barangayId) {
-      tokenAlerts.set(barangayId, {
+      await setTokenAlert(barangayId, {
         status: "expired",
         message: "Facebook Page token expired. Reconnect or update token in barangay settings.",
         at: new Date().toISOString(),
@@ -1222,10 +1446,24 @@ app.listen(PORT, () => {
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({
+    ok: true,
+    storage: isFirestoreConfigured() ? "firestore" : "local-json",
+    staffKeyConfigured: Boolean(STAFF_DASHBOARD_KEY),
+    ownerKeyConfigured: Boolean(OWNER_DASHBOARD_KEY),
+  });
 });
 
-app.get("/api/admin/requests", requireAdminApiKey, async (req, res) => {
+app.get("/api/admin/barangays", requireStaffApiKey, async (_req, res) => {
+  await bootstrapPromise;
+  const data = [...barangays.values()].map((barangay) => ({
+    id: barangay.id,
+    name: barangay.name || barangay.id,
+  }));
+  return res.json({ data });
+});
+
+app.get("/api/admin/requests", requireStaffApiKey, async (req, res) => {
   await bootstrapPromise;
   const status = String(req.query.status || "ALL").toUpperCase();
   const barangayId = String(req.query.barangayId || "");
@@ -1244,7 +1482,7 @@ app.get("/api/admin/requests", requireAdminApiKey, async (req, res) => {
   res.json({ data: items, tokenAlerts: Object.fromEntries(tokenAlerts.entries()) });
 });
 
-app.post("/api/admin/requests/:id/approve", requireAdminApiKey, async (req, res) => {
+app.post("/api/admin/requests/:id/approve", requireStaffApiKey, async (req, res) => {
   await bootstrapPromise;
   const request = requests.get(String(req.params.id || "").toUpperCase());
   if (!request) return res.status(404).json({ error: "Request not found." });
@@ -1255,7 +1493,7 @@ app.post("/api/admin/requests/:id/approve", requireAdminApiKey, async (req, res)
   return res.json({ ok: true, data: request });
 });
 
-app.post("/api/admin/requests/:id/pdf", requireAdminApiKey, async (req, res) => {
+app.post("/api/admin/requests/:id/pdf", requireStaffApiKey, async (req, res) => {
   await bootstrapPromise;
   const request = requests.get(String(req.params.id || "").toUpperCase());
   if (!request) return res.status(404).json({ error: "Request not found." });
@@ -1267,7 +1505,7 @@ app.post("/api/admin/requests/:id/pdf", requireAdminApiKey, async (req, res) => 
   return res.json({ ok: true, data: request });
 });
 
-app.post("/api/admin/requests/:id/release", requireAdminApiKey, async (req, res) => {
+app.post("/api/admin/requests/:id/release", requireStaffApiKey, async (req, res) => {
   await bootstrapPromise;
   const request = requests.get(String(req.params.id || "").toUpperCase());
   if (!request) return res.status(404).json({ error: "Request not found." });
@@ -1278,7 +1516,7 @@ app.post("/api/admin/requests/:id/release", requireAdminApiKey, async (req, res)
   return res.json({ ok: true, data: request });
 });
 
-app.get("/api/admin/export.csv", requireAdminApiKey, async (req, res) => {
+app.get("/api/admin/export.csv", requireStaffApiKey, async (req, res) => {
   await bootstrapPromise;
   const barangayId = String(req.query.barangayId || "");
   const items = [...requests.values()].sort(
@@ -1329,21 +1567,28 @@ app.get("/api/admin/export.csv", requireAdminApiKey, async (req, res) => {
   return res.status(200).send(csv);
 });
 
-app.get("/api/admin/backup.json", requireAdminApiKey, async (_req, res) => {
+app.get("/api/admin/backup.json", requireStaffApiKey, async (_req, res) => {
   await bootstrapPromise;
   const payload = { requests: [...requests.values()], barangays: [...barangays.values()], staff: [...staffMembers.values()] };
   return res.status(200).json(payload);
 });
 
-app.get("/api/owner/barangays", requireAdminApiKey, async (_req, res) => {
+app.get("/api/owner/barangays", requireOwnerApiKey, async (_req, res) => {
   await bootstrapPromise;
   return res.json({ data: [...barangays.values()] });
 });
 
-app.post("/api/owner/barangays", requireAdminApiKey, async (req, res) => {
+app.post("/api/owner/barangays", requireOwnerApiKey, async (req, res) => {
   await bootstrapPromise;
   const input = req.body || {};
   const id = String(input.id || "").trim().toLowerCase() || `brgy-${Date.now()}`;
+  if (!/^[a-z0-9-]{2,40}$/.test(id)) {
+    return res.status(400).json({ error: "Barangay ID must use 2-40 lowercase letters, numbers, or hyphens." });
+  }
+  if (barangays.has(id)) {
+    return res.status(409).json({ error: "Barangay ID already exists." });
+  }
+
   const record = {
     id,
     name: input.name || id,
@@ -1363,31 +1608,51 @@ app.post("/api/owner/barangays", requireAdminApiKey, async (req, res) => {
   return res.json({ ok: true, data: record });
 });
 
-app.patch("/api/owner/barangays/:id", requireAdminApiKey, async (req, res) => {
+app.patch("/api/owner/barangays/:id", requireOwnerApiKey, async (req, res) => {
   await bootstrapPromise;
   const id = String(req.params.id || "").toLowerCase();
   const existing = barangays.get(id);
   if (!existing) return res.status(404).json({ error: "Barangay not found." });
-  Object.assign(existing, req.body || {}, { updatedAt: new Date().toISOString() });
+  Object.assign(existing, pickAllowedFields(req.body || {}, [
+    "name",
+    "municipality",
+    "province",
+    "logoUrl",
+    "captainName",
+    "secretaryName",
+    "pageId",
+    "pageAccessToken",
+    "status",
+  ]), { updatedAt: new Date().toISOString() });
   barangays.set(id, existing);
   await persistBarangays();
   return res.json({ ok: true, data: existing });
 });
 
-app.get("/api/owner/staff", requireAdminApiKey, async (_req, res) => {
+app.get("/api/owner/staff", requireOwnerApiKey, async (_req, res) => {
   await bootstrapPromise;
   return res.json({ data: [...staffMembers.values()] });
 });
 
-app.get("/api/owner/token-alerts", requireAdminApiKey, async (_req, res) => {
+app.get("/api/owner/token-alerts", requireOwnerApiKey, async (_req, res) => {
   await bootstrapPromise;
   return res.json({ data: Object.fromEntries(tokenAlerts.entries()) });
 });
 
-app.post("/api/owner/staff", requireAdminApiKey, async (req, res) => {
+app.post("/api/owner/staff", requireOwnerApiKey, async (req, res) => {
   await bootstrapPromise;
   const input = req.body || {};
   const id = String(input.id || "").trim().toLowerCase() || `staff-${Date.now()}`;
+  if (!/^[a-z0-9-]{2,40}$/.test(id)) {
+    return res.status(400).json({ error: "Staff ID must use 2-40 lowercase letters, numbers, or hyphens." });
+  }
+  if (staffMembers.has(id)) {
+    return res.status(409).json({ error: "Staff ID already exists." });
+  }
+  if (input.barangayId && !barangays.has(input.barangayId)) {
+    return res.status(400).json({ error: "Selected barangay does not exist." });
+  }
+
   const record = {
     id,
     name: input.name || id,
@@ -1403,22 +1668,46 @@ app.post("/api/owner/staff", requireAdminApiKey, async (req, res) => {
   return res.json({ ok: true, data: record });
 });
 
-app.patch("/api/owner/staff/:id", requireAdminApiKey, async (req, res) => {
+app.patch("/api/owner/staff/:id", requireOwnerApiKey, async (req, res) => {
   await bootstrapPromise;
   const id = String(req.params.id || "").toLowerCase();
   const existing = staffMembers.get(id);
   if (!existing) return res.status(404).json({ error: "Staff not found." });
-  Object.assign(existing, req.body || {}, { updatedAt: new Date().toISOString() });
+  Object.assign(existing, pickAllowedFields(req.body || {}, [
+    "name",
+    "barangayId",
+    "role",
+    "psid",
+    "active",
+  ]), { updatedAt: new Date().toISOString() });
   staffMembers.set(id, existing);
   await persistStaffMembers();
   return res.json({ ok: true, data: existing });
 });
 
-function requireAdminApiKey(req, res, next) {
+function pickAllowedFields(input, allowedFields) {
+  const output = {};
+  for (const field of allowedFields) {
+    if (Object.prototype.hasOwnProperty.call(input, field)) output[field] = input[field];
+  }
+  return output;
+}
+
+function requireStaffApiKey(req, res, next) {
+  return requireApiKey(req, res, next, STAFF_DASHBOARD_KEY, "Staff access key is not configured.");
+}
+
+function requireOwnerApiKey(req, res, next) {
+  return requireApiKey(req, res, next, OWNER_DASHBOARD_KEY, "Owner access key is not configured.");
+}
+
+function requireApiKey(req, res, next, expectedKey, missingMessage) {
   const headerKey = req.headers["x-admin-key"];
-  const queryKey = req.query.key;
-  const provided = headerKey || queryKey;
-  if (!provided || provided !== ADMIN_DASHBOARD_KEY) {
+  const provided = Array.isArray(headerKey) ? headerKey[0] : headerKey;
+  if (!expectedKey) {
+    return res.status(503).json({ error: missingMessage });
+  }
+  if (!provided || provided !== expectedKey) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   return next();

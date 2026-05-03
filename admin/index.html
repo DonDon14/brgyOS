@@ -8,92 +8,80 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">BrgyOS</div>
-    <div class="portal-tag">Barangay Portal</div>
+    <div>
+      <div class="brand">BrgyOS</div>
+      <div class="topbar-subtitle">Barangay service desk</div>
+    </div>
+    <div class="portal-tag">Staff Portal</div>
   </header>
   <div class="layout">
     <aside class="sidenav">
-      <h3>Navigation</h3>
+      <h3>Barangay Portal</h3>
       <a class="nav-link active" href="/admin/">Dashboard</a>
-      <a class="nav-link" href="#request-queue">Request Queue</a>
-      <a class="nav-link" href="#history">History</a>
-      <a class="nav-link" href="#exports">Exports & Backup</a>
+      <a class="nav-link" href="/admin/requests.html">Request Queue</a>
+      <a class="nav-link" href="/admin/history.html">History</a>
+      <a class="nav-link" href="/admin/exports.html">Exports</a>
     </aside>
 
     <main class="wrap">
-      <header>
-        <h1>BrgyOS Staff Dashboard</h1>
-        <p>Review and process document requests.</p>
+      <header class="page-heading hero-panel">
+        <div>
+          <span class="eyebrow">Daily Operations</span>
+          <h1>Staff Dashboard</h1>
+          <p>Review citizen requests, move documents through the release workflow, and keep the queue clean.</p>
+        </div>
+        <a class="primary-link" href="/admin/requests.html">Open Queue</a>
       </header>
 
       <section class="auth card">
-        <label for="adminKey">Admin Key</label>
-        <input id="adminKey" type="password" placeholder="Enter ADMIN_DASHBOARD_KEY" />
-        <button id="saveKeyBtn">Save Key</button>
-      </section>
-
-      <section id="exports" class="toolbar card">
-        <label for="barangayFilter">Barangay</label>
-        <select id="barangayFilter"></select>
-        <label for="statusFilter">Status</label>
-        <select id="statusFilter">
-          <option value="ALL">All</option>
-          <option value="PENDING_APPROVAL">Pending</option>
-          <option value="APPROVED">Approved</option>
-          <option value="PDF_GENERATED">PDF Generated</option>
-          <option value="RELEASED">Released</option>
-        </select>
-        <button id="refreshBtn">Refresh</button>
-        <button id="exportBtn" type="button">Export CSV</button>
-        <button id="backupBtn" type="button">Download Backup</button>
+        <label for="adminKey">Staff Access Key</label>
+        <input id="adminKey" type="password" placeholder="Paste staff access key" />
+        <button id="saveKeyBtn">Unlock</button>
         <span id="msg"></span>
       </section>
 
-      <section id="request-queue" class="card table-card">
-        <table>
-          <thead>
-            <tr>
-              <th>Reference</th>
-              <th>Name</th>
-              <th>Document</th>
-              <th>Address</th>
-              <th>Status</th>
-              <th>Updated</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
+      <section class="stat-grid">
+        <article class="stat-card accent-blue">
+          <span>Pending review</span>
+          <strong id="pendingCount">-</strong>
+        </article>
+        <article class="stat-card accent-teal">
+          <span>Approved</span>
+          <strong id="approvedCount">-</strong>
+        </article>
+        <article class="stat-card accent-green">
+          <span>PDF ready</span>
+          <strong id="pdfReadyCount">-</strong>
+        </article>
+        <article class="stat-card accent-gray">
+          <span>Released</span>
+          <strong id="releasedCount">-</strong>
+        </article>
       </section>
 
-      <section id="history" class="card table-card">
-        <h2>History (Processed)</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Reference</th>
-              <th>Name</th>
-              <th>Status</th>
-              <th>Updated</th>
-            </tr>
-          </thead>
-          <tbody id="historyRows"></tbody>
-        </table>
+      <section class="two-column">
+        <article class="card">
+          <h2>Priority Workflow</h2>
+          <ol class="workflow-list">
+            <li><strong>Review pending</strong><span>Open each request and verify resident details.</span></li>
+            <li><strong>Approve request</strong><span>Notify the citizen that processing has started.</span></li>
+            <li><strong>Generate PDF</strong><span>Prepare the barangay document for pickup.</span></li>
+            <li><strong>Mark released</strong><span>Close the request once the document is claimed.</span></li>
+          </ol>
+        </article>
+        <article class="card">
+          <h2>Queue Summary</h2>
+          <p id="snapshotText">Enter the staff access key to load request totals.</p>
+          <div class="actions stacked-actions">
+            <a class="secondary-link" href="/admin/history.html">Processed History</a>
+            <a class="secondary-link" href="/admin/exports.html">Exports and Backup</a>
+          </div>
+        </article>
       </section>
+
       <footer class="page-footer">BrgyOS Barangay Portal</footer>
     </main>
   </div>
-
-  <dialog id="requestModal">
-    <article>
-      <h3 id="modalTitle">Request Details</h3>
-      <pre id="modalBody"></pre>
-      <p><a id="modalPdfLink" href="#" target="_blank" rel="noreferrer">Open PDF</a></p>
-      <h4>Timeline</h4>
-      <ul id="modalTimeline"></ul>
-      <button id="closeModalBtn">Close</button>
-    </article>
-  </dialog>
 
   <script src="/admin/app.js"></script>
 </body>
