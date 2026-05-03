@@ -147,6 +147,25 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
     return promptForStep(session.step, session.draft);
   }
 
+  const intent = await analyzeMessageIntent(text);
+
+  if (intent === "REQUEST") {
+    userSessions.set(senderId, { step: "awaiting_document", draft: { senderId } });
+    return asQuickReply("Sige, tabangan tika sa request. Unsa nga document imong kinahanglan?", [
+      { title: "Clearance", payload: "DOC_CLEARANCE" },
+      { title: "Indigency", payload: "DOC_INDIGENCY" },
+      { title: "Residency", payload: "DOC_RESIDENCY" },
+      { title: "Certificate", payload: "DOC_CERTIFICATE" },
+    ]);
+  }
+
+  if (intent === "FAQ") {
+    const helpReply = await generateGeminiReply(
+      `User asks for guidance/info, not immediate form submission. Reply helpful and short, and offer to start request if needed. User: ${text}`
+    );
+    return asText(helpReply);
+  }
+
   if (/status\s+/i.test(text)) {
     const refId = text.split(/\s+/)[1]?.toUpperCase();
     if (!refId) return asText("Use: STATUS BRGY-2026-0001");
@@ -163,6 +182,41 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
   }
 
   return asText(await generateGeminiReply(text));
+}
+
+async function analyzeMessageIntent(userText) {
+  const fallback = /(clearance|indigency|residency|certificate|document|request|kuha|apply|apply po|pa request)/i
+    .test(userText)
+    ? "REQUEST"
+    : "FAQ";
+
+  if (!GEMINI_API_KEY) return fallback;
+
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const prompt =
+    "Classify message intent for barangay Messenger bot. Return one word only: REQUEST or FAQ. REQUEST means user wants to start/continue document transaction. FAQ means user asks information/how-to/prices/requirements.";
+
+  try {
+    const response = await axios.post(
+      endpoint,
+      {
+        contents: [{ role: "user", parts: [{ text: `${prompt}\nMessage: ${userText}` }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 10 },
+      },
+      { headers: { "Content-Type": "application/json" }, timeout: 10000 }
+    );
+
+    const raw =
+      response.data?.candidates?.[0]?.content?.parts
+        ?.map((part) => part.text)
+        .join(" ")
+        .toUpperCase() || "";
+    if (raw.includes("REQUEST")) return "REQUEST";
+    if (raw.includes("FAQ")) return "FAQ";
+    return fallback;
+  } catch (_error) {
+    return fallback;
+  }
 }
 
 async function handleAdminCommand(_senderId, commandText) {
