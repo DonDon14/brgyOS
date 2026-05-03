@@ -150,6 +150,13 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
         const normalizedDraft = await normalizeRequestDraft(session.draft);
         const validationError = validateDraft(normalizedDraft);
         if (validationError) {
+          session.draft = normalizedDraft;
+          const nextStep = resolveStepFromValidationError(validationError);
+          if (nextStep) {
+            session.step = nextStep;
+            userSessions.set(senderId, session);
+            return asText(validationError);
+          }
           return asText(validationError);
         }
         const request = createRequest(normalizedDraft);
@@ -781,6 +788,16 @@ function validateDraft(draft) {
   if (!draft.pickupDate || draft.pickupDate.trim().length < 4) {
     return "Please provide a valid pickup date.";
   }
+  return "";
+}
+
+function resolveStepFromValidationError(message) {
+  const m = String(message || "").toLowerCase();
+  if (m.includes("document")) return "awaiting_document";
+  if (m.includes("full name")) return "awaiting_full_name";
+  if (m.includes("address")) return "awaiting_address";
+  if (m.includes("purpose")) return "awaiting_purpose";
+  if (m.includes("pickup date")) return "awaiting_pickup_date";
   return "";
 }
 
