@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BrgyOS Staff Dashboard</title>
+  <link rel="stylesheet" href="/admin/styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <h1>BrgyOS Staff Dashboard</h1>
+      <p>Review and process document requests.</p>
+    </header>
+
+    <section class="auth card">
+      <label for="adminKey">Admin Key</label>
+      <input id="adminKey" type="password" placeholder="Enter ADMIN_DASHBOARD_KEY" />
+      <button id="saveKeyBtn">Save Key</button>
+    </section>
+
+    <section class="toolbar card">
+      <label for="statusFilter">Status</label>
+      <select id="statusFilter">
+        <option value="ALL">All</option>
+        <option value="PENDING_APPROVAL">Pending</option>
+        <option value="APPROVED">Approved</option>
+        <option value="PDF_GENERATED">PDF Generated</option>
+        <option value="RELEASED">Released</option>
+      </select>
+      <button id="refreshBtn">Refresh</button>
+      <span id="msg"></span>
+    </section>
+
+    <section class="card table-card">
+      <table>
+        <thead>
+          <tr>
+            <th>Reference</th>
+            <th>Name</th>
+            <th>Document</th>
+            <th>Address</th>
+            <th>Status</th>
+            <th>Updated</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="/admin/app.js"></script>
+</body>
+</html>

@@ -14,6 +14,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-pro";
 const PORT = process.env.PORT || 1337;
 const SERVICE_FEE_PHP = 15;
+const ADMIN_DASHBOARD_KEY = process.env.ADMIN_DASHBOARD_KEY || "change-me";
 const ADMIN_PSID_LIST = (process.env.ADMIN_PSID_LIST || "")
   .split(",")
   .map((value) => value.trim())
@@ -33,6 +34,7 @@ app.get("/ping", (_req, res) => {
   res.status(200).send("pong");
 });
 app.use("/files", express.static(PDF_DIR));
+app.use("/admin", express.static(path.join(__dirname, "admin")));
 
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -662,3 +664,62 @@ async function notifyCustomer(recipientId, text) {
 app.listen(PORT, () => {
   console.log(`BrgyOS backend running on port ${PORT}`);
 });
+
+app.get("/api/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.get("/api/admin/requests", requireAdminApiKey, (req, res) => {
+  const status = String(req.query.status || "ALL").toUpperCase();
+  let items = [...requests.values()].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
+
+  if (status !== "ALL") {
+    items = items.filter((item) => item.status === status);
+  }
+
+  res.json({ data: items });
+});
+
+app.post("/api/admin/requests/:id/approve", requireAdminApiKey, async (req, res) => {
+  const request = requests.get(String(req.params.id || "").toUpperCase());
+  if (!request) return res.status(404).json({ error: "Request not found." });
+
+  request.status = "APPROVED";
+  request.updatedAt = new Date().toISOString();
+  persistRequests();
+  await notifyCustomer(request.senderId, `Your request ${request.id} is APPROVED.`);
+  return res.json({ ok: true, data: request });
+});
+
+app.post("/api/admin/requests/:id/pdf", requireAdminApiKey, async (req, res) => {
+  const request = requests.get(String(req.params.id || "").toUpperCase());
+  if (!request) return res.status(404).json({ error: "Request not found." });
+
+  request.status = "PDF_GENERATED";
+  request.pdfUrl = await generateDocumentPdf(request);
+  request.updatedAt = new Date().toISOString();
+  persistRequests();
+  await notifyCustomer(request.senderId, `Your document for ${request.id} is ready.\nPDF: ${request.pdfUrl}`);
+  return res.json({ ok: true, data: request });
+});
+
+app.post("/api/admin/requests/:id/release", requireAdminApiKey, async (req, res) => {
+  const request = requests.get(String(req.params.id || "").toUpperCase());
+  if (!request) return res.status(404).json({ error: "Request not found." });
+
+  request.status = "RELEASED";
+  request.updatedAt = new Date().toISOString();
+  persistRequests();
+  await notifyCustomer(request.senderId, `Your request ${request.id} is marked as RELEASED.`);
+  return res.json({ ok: true, data: request });
+});
+
+function requireAdminApiKey(req, res, next) {
+  const headerKey = req.headers["x-admin-key"];
+  if (!headerKey || headerKey !== ADMIN_DASHBOARD_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  return next();
+}

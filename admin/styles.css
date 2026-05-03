@@ -1,0 +1,47 @@
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --text: #121722;
+  --muted: #5d6678;
+  --line: #dce2ec;
+  --brand: #1f6feb;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  color: var(--text);
+  background: linear-gradient(180deg, #edf2fa 0%, #f8fafc 100%);
+}
+.wrap { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.auth, .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+input, select, button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+button {
+  background: var(--brand);
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+}
+button.secondary { background: #475467; }
+#msg { color: var(--muted); font-size: 13px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions button { padding: 6px 10px; font-size: 12px; }
+.status { font-weight: 600; }
+@media (max-width: 900px) {
+  .table-card { overflow-x: auto; }
+  table { min-width: 980px; }
+}
