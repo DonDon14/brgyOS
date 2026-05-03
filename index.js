@@ -94,6 +94,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
   const text = String(rawText || "").trim();
   const payload = String(quickReplyPayload || "").trim();
   if (!text) return null;
+  const detectedLang = detectResponseLanguage(text);
 
   if (isAdmin(senderId) && payload.startsWith("STAFF_")) {
     return handleAdminQuickReply(payload);
@@ -103,27 +104,29 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
     return handleAdminCommand(senderId, text);
   }
 
-  const session = userSessions.get(senderId) || { step: null, draft: null };
+  const session = userSessions.get(senderId) || { step: null, draft: null, lang: detectedLang };
+  session.lang = session.lang || detectedLang;
 
   if (/^start$/i.test(text) || /^request$/i.test(text)) {
     userSessions.set(senderId, {
       step: "awaiting_document",
-      draft: { senderId },
+      draft: { senderId, lang: detectedLang },
+      lang: detectedLang,
     });
-    return promptForStep("awaiting_document");
+    return promptForStep("awaiting_document", {}, detectedLang);
   }
 
   if (session.step && (payload === "BACK" || /^back$/i.test(text))) {
     const previousStep = getPreviousStep(session.step);
     session.step = previousStep;
     userSessions.set(senderId, session);
-    return promptForStep(previousStep, session.draft);
+    return promptForStep(previousStep, session.draft, session.lang);
   }
 
   if (session.step === "awaiting_confirm") {
     if (/^cancel$/i.test(text)) {
       userSessions.delete(senderId);
-      return asText("Request cancelled. Reply START anytime to create a new request.");
+      return asText(localize(session.lang, "cancelled"));
     }
 
     if (/^confirm$/i.test(text) || payload === "CONFIRM") {
@@ -132,26 +135,28 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
       userSessions.delete(senderId);
       logCommissionEvent(request);
       return asText(
-        `Your request is submitted.\nReference ID: ${request.id}\n` +
-        "Status: PENDING APPROVAL\n" +
-        "You will receive an update after barangay staff review."
+        localize(session.lang, "submitted", request.id)
       );
     }
 
-    return asText("Reply CONFIRM to submit, or CANCEL to stop.");
+    return asText(localize(session.lang, "confirm_or_cancel"));
   }
 
   if (session.step) {
     applySessionInput(session, text, payload);
     userSessions.set(senderId, session);
-    return promptForStep(session.step, session.draft);
+    return promptForStep(session.step, session.draft, session.lang);
   }
 
   const intent = await analyzeMessageIntent(text);
 
   if (intent === "REQUEST") {
-    userSessions.set(senderId, { step: "awaiting_document", draft: { senderId } });
-    return asQuickReply("Sige, tabangan tika sa request. Unsa nga document imong kinahanglan?", [
+    userSessions.set(senderId, {
+      step: "awaiting_document",
+      draft: { senderId, lang: detectedLang },
+      lang: detectedLang,
+    });
+    return asQuickReply(localize(detectedLang, "ask_doc"), [
       { title: "Clearance", payload: "DOC_CLEARANCE" },
       { title: "Indigency", payload: "DOC_INDIGENCY" },
       { title: "Residency", payload: "DOC_RESIDENCY" },
@@ -311,8 +316,10 @@ function createRequest(draft) {
     senderId: draft.senderId,
     documentType: draft.documentType,
     fullName: draft.fullName,
+    address: draft.address,
     purpose: draft.purpose,
     pickupDate: draft.pickupDate,
+    lang: draft.lang || "en",
     serviceFee: SERVICE_FEE_PHP,
     status: "PENDING_APPROVAL",
     pdfUrl: null,
@@ -475,9 +482,9 @@ function makeStaffMenuQuickReply() {
   ]);
 }
 
-function promptForStep(step, draft = {}) {
+function promptForStep(step, draft = {}, lang = "en") {
   if (step === "awaiting_document") {
-    return asQuickReply("What document do you need?", [
+    return asQuickReply(localize(lang, "ask_doc"), [
       { title: "Clearance", payload: "DOC_CLEARANCE" },
       { title: "Indigency", payload: "DOC_INDIGENCY" },
       { title: "Residency", payload: "DOC_RESIDENCY" },
@@ -486,38 +493,38 @@ function promptForStep(step, draft = {}) {
   }
 
   if (step === "awaiting_full_name") {
-    return asQuickReply("Please provide your full name.", [{ title: "Back", payload: "BACK" }]);
+    return asQuickReply(localize(lang, "ask_name"), [{ title: localize(lang, "back"), payload: "BACK" }]);
   }
 
   if (step === "awaiting_address") {
-    return asQuickReply("Please provide your complete address.", [{ title: "Back", payload: "BACK" }]);
+    return asQuickReply(localize(lang, "ask_address"), [{ title: localize(lang, "back"), payload: "BACK" }]);
   }
 
   if (step === "awaiting_purpose") {
-    return asQuickReply("Please provide the purpose of request.", [{ title: "Back", payload: "BACK" }]);
+    return asQuickReply(localize(lang, "ask_purpose"), [{ title: localize(lang, "back"), payload: "BACK" }]);
   }
 
   if (step === "awaiting_pickup_date") {
-    return asQuickReply("Preferred pickup date?", [
-      { title: "Today", payload: "DATE_TODAY" },
-      { title: "Tomorrow", payload: "DATE_TOMORROW" },
-      { title: "Back", payload: "BACK" },
+    return asQuickReply(localize(lang, "ask_date"), [
+      { title: localize(lang, "today"), payload: "DATE_TODAY" },
+      { title: localize(lang, "tomorrow"), payload: "DATE_TOMORROW" },
+      { title: localize(lang, "back"), payload: "BACK" },
     ]);
   }
 
   if (step === "awaiting_confirm") {
     return asQuickReply(
-      "Please confirm your request:\n" +
+      `${localize(lang, "confirm_header")}\n` +
         `Document: ${draft.documentType}\n` +
-        `Full Name: ${draft.fullName}\n` +
-        `Address: ${draft.address}\n` +
-        `Purpose: ${draft.purpose}\n` +
+        `Full Name: ${toTitleCase(draft.fullName || "")}\n` +
+        `Address: ${toTitleCase(draft.address || "")}\n` +
+        `Purpose: ${sentenceCase(draft.purpose || "")}\n` +
         `Pickup Date: ${draft.pickupDate}\n` +
         `Service Fee: PHP ${SERVICE_FEE_PHP}`,
       [
-        { title: "Confirm", payload: "CONFIRM" },
-        { title: "Back", payload: "BACK" },
-        { title: "Cancel", payload: "CANCEL" },
+        { title: localize(lang, "confirm"), payload: "CONFIRM" },
+        { title: localize(lang, "back"), payload: "BACK" },
+        { title: localize(lang, "cancel"), payload: "CANCEL" },
       ]
     );
   }
@@ -568,6 +575,68 @@ function parsePickupDate(text, payload) {
   if (payload === "DATE_TODAY") return "Today";
   if (payload === "DATE_TOMORROW") return "Tomorrow";
   return text;
+}
+
+function detectResponseLanguage(text) {
+  const lower = String(text || "").toLowerCase();
+  if (/\b(unsa|ngano|palihog|kini|kuha)\b/.test(lower)) return "ceb";
+  if (/\b(ano|paano|po|pakisuyo|kumuha)\b/.test(lower)) return "tl";
+  if (/\b(how|what|please|request|online)\b/.test(lower)) return "en";
+  return "tl";
+}
+
+function localize(lang, key, refId = "") {
+  const dict = {
+    en: {
+      ask_doc: "What document do you need?",
+      ask_name: "Please provide your full name.",
+      ask_address: "Please provide your complete address.",
+      ask_purpose: "Please provide the purpose of request.",
+      ask_date: "Preferred pickup date?",
+      confirm_header: "Please confirm your request:",
+      confirm: "Confirm",
+      cancel: "Cancel",
+      back: "Back",
+      today: "Today",
+      tomorrow: "Tomorrow",
+      cancelled: "Request cancelled. Reply START anytime to create a new request.",
+      submitted: `Your request is submitted.\nReference ID: ${refId}\nStatus: PENDING APPROVAL\nYou will receive an update after barangay staff review.`,
+      confirm_or_cancel: "Reply CONFIRM to submit, or CANCEL to stop.",
+    },
+    tl: {
+      ask_doc: "Anong dokumento ang kailangan mo?",
+      ask_name: "Pakibigay ang buong pangalan mo.",
+      ask_address: "Pakibigay ang kumpletong address mo.",
+      ask_purpose: "Ano ang layunin ng request?",
+      ask_date: "Kailan ang preferred pickup date?",
+      confirm_header: "Paki-confirm ang iyong request:",
+      confirm: "Confirm",
+      cancel: "Cancel",
+      back: "Back",
+      today: "Today",
+      tomorrow: "Tomorrow",
+      cancelled: "Nakansela ang request. I-type ang START kung gusto mong magsimula ulit.",
+      submitted: `Na-submit na ang request mo.\nReference ID: ${refId}\nStatus: PENDING APPROVAL\nMakakatanggap ka ng update pagkatapos ng staff review.`,
+      confirm_or_cancel: "I-reply ang CONFIRM para isumite, o CANCEL para itigil.",
+    },
+    ceb: {
+      ask_doc: "Unsa nga dokumento ang imong kinahanglan?",
+      ask_name: "Palihug ihatag ang imong tibuok ngalan.",
+      ask_address: "Palihug ihatag ang imong kumpletong address.",
+      ask_purpose: "Unsa ang tuyo sa request?",
+      ask_date: "Kanus-a ang preferred pickup date?",
+      confirm_header: "Palihug i-confirm ang imong request:",
+      confirm: "Confirm",
+      cancel: "Cancel",
+      back: "Back",
+      today: "Today",
+      tomorrow: "Tomorrow",
+      cancelled: "Nakanselar ang request. I-type ang START kung gusto ka magsugod usab.",
+      submitted: `Na-submit na ang imong request.\nReference ID: ${refId}\nStatus: PENDING APPROVAL\nMaka-receive ka og update human sa staff review.`,
+      confirm_or_cancel: "I-reply ang CONFIRM para isumite, o CANCEL para undang.",
+    },
+  };
+  return (dict[lang] || dict.tl)[key] || key;
 }
 
 async function normalizeRequestDraft(draft) {
