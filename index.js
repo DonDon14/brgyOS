@@ -33,6 +33,7 @@ const PDF_DIR = path.join(__dirname, "generated-pdfs");
 const REQUESTS_FILE = path.join(DATA_DIR, "requests.json");
 const FIREBASE_SERVICE_ACCOUNT_JSON = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "";
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "";
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 30 * 60 * 1000);
 let requestCounter = 1;
 
 ensureStorage();
@@ -135,11 +136,17 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
     return handleAdminCommand(senderId, text, barangay?.id);
   }
 
-  const session = userSessions.get(senderId) || { step: null, draft: null, lang: detectedLang };
-  session.lang = session.lang || detectedLang;
+  const currentSession = userSessions.get(senderId);
+  if (currentSession?.touchedAt && Date.now() - Number(currentSession.touchedAt) > SESSION_TTL_MS) {
+    userSessions.delete(senderId);
+  }
 
-  // Recover gracefully when a document quick-reply payload arrives without an active session.
-  if (!session.step && /^DOC_/.test(payload)) {
+  const session = userSessions.get(senderId) || { step: null, draft: null, lang: detectedLang, touchedAt: Date.now() };
+  session.lang = session.lang || detectedLang;
+  session.touchedAt = Date.now();
+
+  // Choosing a document should always start a fresh request draft.
+  if (/^DOC_/.test(payload)) {
     const selectedDoc = parseDocumentValue(text, payload);
     userSessions.set(senderId, {
       step: "awaiting_full_name",
@@ -150,6 +157,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
         documentType: selectedDoc,
       },
       lang: detectedLang,
+      touchedAt: Date.now(),
     });
     return promptForStep("awaiting_full_name", { documentType: selectedDoc }, detectedLang);
   }
@@ -159,6 +167,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
       step: "awaiting_document",
       draft: { senderId, lang: detectedLang, barangayId: barangay?.id || "default" },
       lang: detectedLang,
+      touchedAt: Date.now(),
     });
     return promptForStep("awaiting_document", {}, detectedLang);
   }
@@ -174,6 +183,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
   if (session.step && (payload === "BACK" || /^back$/i.test(text))) {
     const previousStep = getPreviousStep(session.step);
     session.step = previousStep;
+    session.touchedAt = Date.now();
     userSessions.set(senderId, session);
     return promptForStep(previousStep, session.draft, session.lang);
   }
@@ -193,6 +203,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
           const nextStep = resolveStepFromValidationError(validationError);
           if (nextStep) {
             session.step = nextStep;
+            session.touchedAt = Date.now();
             userSessions.set(senderId, session);
             return asText(validationError);
           }
@@ -224,6 +235,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
       step: "awaiting_document",
       draft: { senderId, lang: detectedLang, barangayId: barangay?.id || "default" },
       lang: detectedLang,
+      touchedAt: Date.now(),
     });
     return promptForStep("awaiting_document", {}, detectedLang);
   }
@@ -235,6 +247,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
 
   if (session.step) {
     applySessionInput(session, text, payload);
+    session.touchedAt = Date.now();
     userSessions.set(senderId, session);
     return promptForStep(session.step, session.draft, session.lang);
   }
@@ -246,6 +259,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
       step: "awaiting_document",
       draft: { senderId, lang: detectedLang, barangayId: barangay?.id || "default" },
       lang: detectedLang,
+      touchedAt: Date.now(),
     });
     return asQuickReply(localize(detectedLang, "ask_doc"), [
       { title: "Clearance", payload: "DOC_CLEARANCE" },
@@ -263,7 +277,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
   }
 
   if (isDocumentIntent(text)) {
-    userSessions.set(senderId, { step: "awaiting_document", draft: { senderId } });
+    userSessions.set(senderId, { step: "awaiting_document", draft: { senderId }, touchedAt: Date.now() });
     return asText("I can help with that. What document do you need?");
   }
 
