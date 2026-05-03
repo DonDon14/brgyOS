@@ -88,7 +88,7 @@ async function handleIncomingMessage(senderId, rawText) {
   const text = String(rawText || "").trim();
   if (!text) return null;
 
-  if (isAdmin(senderId) && text.startsWith("/")) {
+  if (isAdmin(senderId) && isAdminIntent(text)) {
     return handleAdminCommand(senderId, text);
   }
 
@@ -177,7 +177,8 @@ async function handleIncomingMessage(senderId, rawText) {
 }
 
 async function handleAdminCommand(_senderId, commandText) {
-  const parts = commandText.trim().split(/\s+/);
+  const normalized = normalizeAdminCommand(commandText);
+  const parts = normalized.trim().split(/\s+/);
   const command = parts[0].toLowerCase();
   const refId = parts[1] ? parts[1].toUpperCase() : null;
 
@@ -225,7 +226,10 @@ async function handleAdminCommand(_senderId, commandText) {
     return `${request.id} marked as released.`;
   }
 
-  return "Unknown admin command.";
+  return (
+    "Unknown staff action.\n" +
+    "Try: 'show pending', 'approve BRGY-2026-0001', 'generate pdf BRGY-2026-0001', or 'mark released BRGY-2026-0001'."
+  );
 }
 
 function createRequest(draft) {
@@ -263,6 +267,35 @@ function formatCustomerStatus(request) {
 
 function isAdmin(senderId) {
   return ADMIN_PSID_LIST.includes(senderId);
+}
+
+function isAdminIntent(text) {
+  const normalized = text.trim().toLowerCase();
+  return (
+    normalized.startsWith("/") ||
+    normalized === "pending" ||
+    normalized === "show pending" ||
+    normalized.startsWith("approve ") ||
+    normalized.startsWith("generate pdf ") ||
+    normalized.startsWith("pdf ") ||
+    normalized.startsWith("release ") ||
+    normalized.startsWith("mark released ")
+  );
+}
+
+function normalizeAdminCommand(text) {
+  const raw = text.trim();
+  const normalized = raw.toLowerCase();
+
+  if (normalized === "pending" || normalized === "show pending") return "/pending";
+  if (normalized.startsWith("approve ")) return `/approve ${raw.split(/\s+/).slice(1).join(" ")}`;
+  if (normalized.startsWith("generate pdf ")) return `/pdf ${raw.split(/\s+/).slice(2).join(" ")}`;
+  if (normalized.startsWith("pdf ")) return `/pdf ${raw.split(/\s+/).slice(1).join(" ")}`;
+  if (normalized.startsWith("release ")) return `/release ${raw.split(/\s+/).slice(1).join(" ")}`;
+  if (normalized.startsWith("mark released "))
+    return `/release ${raw.split(/\s+/).slice(2).join(" ")}`;
+
+  return raw;
 }
 
 function isDocumentIntent(text) {
