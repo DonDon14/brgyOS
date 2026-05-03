@@ -7,67 +7,83 @@
   <link rel="stylesheet" href="/admin/styles.css" />
 </head>
 <body>
-  <main class="wrap">
-    <header>
-      <h1>BrgyOS Staff Dashboard</h1>
-      <p>Review and process document requests.</p>
-    </header>
+  <header class="topbar">
+    <div class="brand">BrgyOS</div>
+    <div class="portal-tag">Barangay Portal</div>
+  </header>
+  <div class="layout">
+    <aside class="sidenav">
+      <h3>Navigation</h3>
+      <a class="nav-link active" href="/admin/">Dashboard</a>
+      <a class="nav-link" href="#request-queue">Request Queue</a>
+      <a class="nav-link" href="#history">History</a>
+      <a class="nav-link" href="#exports">Exports & Backup</a>
+      <a class="nav-link" href="/owner/">Go to Owner Portal</a>
+    </aside>
 
-    <section class="auth card">
-      <label for="adminKey">Admin Key</label>
-      <input id="adminKey" type="password" placeholder="Enter ADMIN_DASHBOARD_KEY" />
-      <button id="saveKeyBtn">Save Key</button>
-    </section>
+    <main class="wrap">
+      <header>
+        <h1>BrgyOS Staff Dashboard</h1>
+        <p>Review and process document requests.</p>
+      </header>
 
-    <section class="toolbar card">
-      <label for="barangayFilter">Barangay</label>
-      <select id="barangayFilter"></select>
-      <label for="statusFilter">Status</label>
-      <select id="statusFilter">
-        <option value="ALL">All</option>
-        <option value="PENDING_APPROVAL">Pending</option>
-        <option value="APPROVED">Approved</option>
-        <option value="PDF_GENERATED">PDF Generated</option>
-        <option value="RELEASED">Released</option>
-      </select>
-      <button id="refreshBtn">Refresh</button>
-      <button id="exportBtn" type="button">Export CSV</button>
-      <button id="backupBtn" type="button">Download Backup</button>
-      <span id="msg"></span>
-    </section>
+      <section class="auth card">
+        <label for="adminKey">Admin Key</label>
+        <input id="adminKey" type="password" placeholder="Enter ADMIN_DASHBOARD_KEY" />
+        <button id="saveKeyBtn">Save Key</button>
+      </section>
 
-    <section class="card table-card">
-      <table>
-        <thead>
-          <tr>
-            <th>Reference</th>
-            <th>Name</th>
-            <th>Document</th>
-            <th>Address</th>
-            <th>Status</th>
-            <th>Updated</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
-    </section>
+      <section id="exports" class="toolbar card">
+        <label for="barangayFilter">Barangay</label>
+        <select id="barangayFilter"></select>
+        <label for="statusFilter">Status</label>
+        <select id="statusFilter">
+          <option value="ALL">All</option>
+          <option value="PENDING_APPROVAL">Pending</option>
+          <option value="APPROVED">Approved</option>
+          <option value="PDF_GENERATED">PDF Generated</option>
+          <option value="RELEASED">Released</option>
+        </select>
+        <button id="refreshBtn">Refresh</button>
+        <button id="exportBtn" type="button">Export CSV</button>
+        <button id="backupBtn" type="button">Download Backup</button>
+        <span id="msg"></span>
+      </section>
 
-    <section class="card table-card">
-      <h2>History (Processed)</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Reference</th>
-            <th>Name</th>
-            <th>Status</th>
-            <th>Updated</th>
-          </tr>
-        </thead>
-        <tbody id="historyRows"></tbody>
-      </table>
-    </section>
-  </main>
+      <section id="request-queue" class="card table-card">
+        <table>
+          <thead>
+            <tr>
+              <th>Reference</th>
+              <th>Name</th>
+              <th>Document</th>
+              <th>Address</th>
+              <th>Status</th>
+              <th>Updated</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </section>
+
+      <section id="history" class="card table-card">
+        <h2>History (Processed)</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Reference</th>
+              <th>Name</th>
+              <th>Status</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="historyRows"></tbody>
+        </table>
+      </section>
+      <footer class="page-footer">BrgyOS Barangay Portal</footer>
+    </main>
+  </div>
 
   <dialog id="requestModal">
     <article>
