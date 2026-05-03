@@ -19,6 +19,9 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
 .brand { font-weight: 700; }
 .portal-tag { color: #4b5563; font-size: 14px; }
@@ -28,6 +31,10 @@ body {
   background: var(--nav-bg);
   color: var(--nav-text);
   padding: 18px 14px;
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  overflow-y: auto;
 }
 .sidenav h3 { margin: 0 0 12px; color: #fff; font-size: 16px; }
 .nav-link {
@@ -39,7 +46,7 @@ body {
   margin-bottom: 6px;
 }
 .nav-link:hover, .nav-link.active { background: rgba(255,255,255,0.1); color: #fff; }
-.wrap { flex: 1; max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.wrap { flex: 1; max-width: 1200px; margin: 24px auto; padding: 0 16px; overflow-x: hidden; }
 .page-footer { color: #6b7280; font-size: 13px; padding: 8px 2px 20px; }
 .card {
   background: white;
