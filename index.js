@@ -180,7 +180,18 @@ async function handleAdminCommand(_senderId, commandText) {
   const normalized = normalizeAdminCommand(commandText);
   const parts = normalized.trim().split(/\s+/);
   const command = parts[0].toLowerCase();
-  const refId = parts[1] ? parts[1].toUpperCase() : null;
+  let refId = parts[1] ? parts[1].toUpperCase() : null;
+
+  if (command === "/menu") {
+    return (
+      "Staff Menu:\n" +
+      "show pending\n" +
+      "approve\n" +
+      "generate pdf\n" +
+      "release\n\n" +
+      "You can also include a reference ID if needed."
+    );
+  }
 
   if (command === "/pending") {
     const pending = [...requests.values()].filter((item) => item.status === "PENDING_APPROVAL");
@@ -191,8 +202,14 @@ async function handleAdminCommand(_senderId, commandText) {
       .join("\n");
   }
 
+  if (!refId && ["/approve", "/pdf", "/release"].includes(command)) {
+    const fallback = findLatestRequestForAction(command);
+    if (!fallback) return "No matching request found. Try 'show pending' first.";
+    refId = fallback.id;
+  }
+
   if (!refId) {
-    return "Admin command format: /approve <REF_ID>, /pdf <REF_ID>, /release <REF_ID>, /pending";
+    return "Try: show pending, approve, generate pdf, or release.";
   }
 
   const request = requests.get(refId);
@@ -228,7 +245,7 @@ async function handleAdminCommand(_senderId, commandText) {
 
   return (
     "Unknown staff action.\n" +
-    "Try: 'show pending', 'approve BRGY-2026-0001', 'generate pdf BRGY-2026-0001', or 'mark released BRGY-2026-0001'."
+    "Try: 'show pending', 'approve', 'generate pdf', or 'release'."
   );
 }
 
@@ -273,11 +290,17 @@ function isAdminIntent(text) {
   const normalized = text.trim().toLowerCase();
   return (
     normalized.startsWith("/") ||
+    normalized === "menu" ||
+    normalized === "staff menu" ||
     normalized === "pending" ||
     normalized === "show pending" ||
+    normalized === "approve" ||
     normalized.startsWith("approve ") ||
+    normalized === "generate pdf" ||
+    normalized === "pdf" ||
     normalized.startsWith("generate pdf ") ||
     normalized.startsWith("pdf ") ||
+    normalized === "release" ||
     normalized.startsWith("release ") ||
     normalized.startsWith("mark released ")
   );
@@ -287,10 +310,14 @@ function normalizeAdminCommand(text) {
   const raw = text.trim();
   const normalized = raw.toLowerCase();
 
+  if (normalized === "menu" || normalized === "staff menu") return "/menu";
   if (normalized === "pending" || normalized === "show pending") return "/pending";
+  if (normalized === "approve") return "/approve";
   if (normalized.startsWith("approve ")) return `/approve ${raw.split(/\s+/).slice(1).join(" ")}`;
+  if (normalized === "generate pdf" || normalized === "pdf") return "/pdf";
   if (normalized.startsWith("generate pdf ")) return `/pdf ${raw.split(/\s+/).slice(2).join(" ")}`;
   if (normalized.startsWith("pdf ")) return `/pdf ${raw.split(/\s+/).slice(1).join(" ")}`;
+  if (normalized === "release") return "/release";
   if (normalized.startsWith("release ")) return `/release ${raw.split(/\s+/).slice(1).join(" ")}`;
   if (normalized.startsWith("mark released "))
     return `/release ${raw.split(/\s+/).slice(2).join(" ")}`;
@@ -300,6 +327,17 @@ function normalizeAdminCommand(text) {
 
 function isDocumentIntent(text) {
   return /(clearance|indigency|residency|certificate|permit|document)/i.test(text);
+}
+
+function findLatestRequestForAction(command) {
+  const items = [...requests.values()].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
+
+  if (command === "/approve") return items.find((item) => item.status === "PENDING_APPROVAL") || null;
+  if (command === "/pdf") return items.find((item) => item.status === "APPROVED") || null;
+  if (command === "/release") return items.find((item) => item.status === "PDF_GENERATED") || null;
+  return null;
 }
 
 async function generateGeminiReply(userText) {
