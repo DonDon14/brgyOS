@@ -124,23 +124,26 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
   }
 
   if (session.step === "awaiting_confirm") {
-    if (/^cancel$/i.test(text)) {
+    if (/^cancel$/i.test(text) || payload === "CANCEL") {
       userSessions.delete(senderId);
       return asText(localize(session.lang, "cancelled"));
     }
 
     if (/^confirm$/i.test(text) || payload === "CONFIRM") {
-      const normalizedDraft = await normalizeRequestDraft(session.draft);
-      const validationError = validateDraft(normalizedDraft);
-      if (validationError) {
-        return asText(validationError);
+      try {
+        const normalizedDraft = await normalizeRequestDraft(session.draft);
+        const validationError = validateDraft(normalizedDraft);
+        if (validationError) {
+          return asText(validationError);
+        }
+        const request = createRequest(normalizedDraft);
+        userSessions.delete(senderId);
+        logCommissionEvent(request);
+        return asText(localize(session.lang, "submitted", request.id));
+      } catch (error) {
+        console.error("Confirm request error:", error?.message || error);
+        return asText("Sorry, naay temporary error sa pag-submit. Palihug try again pinaagi sa CONFIRM.");
       }
-      const request = createRequest(normalizedDraft);
-      userSessions.delete(senderId);
-      logCommissionEvent(request);
-      return asText(
-        localize(session.lang, "submitted", request.id)
-      );
     }
 
     return asText(localize(session.lang, "confirm_or_cancel"));
@@ -923,8 +926,7 @@ async function generateDocumentPdf(request) {
 
     doc.moveDown(2.2);
     doc.font("Helvetica").fontSize(9).text(`Reference No.: ${request.id}`);
-    doc.text(`Resident Address: ${request.address || "-"}`);
-    doc.text(`Service Fee: PHP ${request.serviceFee}`);
+    // Address is already embedded in certificate body; keep footer concise.
     doc.end();
 
     writeStream.on("finish", resolve);
