@@ -12,8 +12,10 @@ OWNER_DASHBOARD_KEY=choose-an-owner-key
 For a live pilot, use Firestore so data survives deploys/restarts:
 ```bash
 FIREBASE_PROJECT_ID=your-firebase-project-id
-# or use FIREBASE_SERVICE_ACCOUNT_JSON for a service account JSON string
+FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
 ```
+
+Important: `FIREBASE_PROJECT_ID` alone is not enough on Render. You must also set `FIREBASE_SERVICE_ACCOUNT_JSON`, otherwise BrgyOS will automatically fall back to local JSON storage.
 
 If Firebase is not configured, BrgyOS falls back to `data/requests.json` and now stores requests, barangays, staff, and token alerts there for small local pilots.
 

@@ -34,6 +34,7 @@ const REQUESTS_FILE = path.join(DATA_DIR, "requests.json");
 const FIREBASE_SERVICE_ACCOUNT_JSON = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "";
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "";
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 30 * 60 * 1000);
+let firestoreDisabled = false;
 let requestCounter = 1;
 
 ensureStorage();
@@ -1059,20 +1060,22 @@ function ensureStorage() {
 }
 
 function isFirestoreConfigured() {
-  return Boolean(FIREBASE_SERVICE_ACCOUNT_JSON || FIREBASE_PROJECT_ID);
+  return Boolean(FIREBASE_SERVICE_ACCOUNT_JSON) && !firestoreDisabled;
 }
 
 function getFirestoreDb() {
-  if (!isFirestoreConfigured()) return null;
-  if (!admin.apps.length) {
-    if (FIREBASE_SERVICE_ACCOUNT_JSON) {
+  if (!isFirestoreConfigured() || firestoreDisabled) return null;
+  try {
+    if (!admin.apps.length) {
       const serviceAccount = JSON.parse(FIREBASE_SERVICE_ACCOUNT_JSON);
-      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-    } else {
-      admin.initializeApp({ projectId: FIREBASE_PROJECT_ID });
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount), projectId: FIREBASE_PROJECT_ID || serviceAccount.project_id });
     }
+    return admin.firestore();
+  } catch (error) {
+    firestoreDisabled = true;
+    console.error("Firestore disabled, falling back to local-json:", error?.message || error);
+    return null;
   }
-  return admin.firestore();
 }
 
 async function bootstrapData() {
