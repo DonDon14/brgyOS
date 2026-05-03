@@ -41,6 +41,32 @@ th, td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: le
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .actions button { padding: 6px 10px; font-size: 12px; }
 .status { font-weight: 600; }
+.link-btn {
+  background: transparent;
+  border: 0;
+  color: #0b57d0;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+dialog {
+  border: 0;
+  border-radius: 12px;
+  width: min(680px, 96vw);
+}
+dialog article {
+  padding: 12px;
+}
+dialog pre {
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  white-space: pre-wrap;
+}
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
 @media (max-width: 900px) {
   .table-card { overflow-x: auto; }
   table { min-width: 980px; }

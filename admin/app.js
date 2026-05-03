@@ -1,9 +1,16 @@
 const rows = document.getElementById("rows");
+const historyRows = document.getElementById("historyRows");
 const msg = document.getElementById("msg");
 const filter = document.getElementById("statusFilter");
 const refreshBtn = document.getElementById("refreshBtn");
 const saveKeyBtn = document.getElementById("saveKeyBtn");
 const adminKeyInput = document.getElementById("adminKey");
+const requestModal = document.getElementById("requestModal");
+const modalTitle = document.getElementById("modalTitle");
+const modalBody = document.getElementById("modalBody");
+const modalTimeline = document.getElementById("modalTimeline");
+const closeModalBtn = document.getElementById("closeModalBtn");
+let currentItems = [];
 
 adminKeyInput.value = localStorage.getItem("brgyos_admin_key") || "";
 
@@ -15,6 +22,7 @@ saveKeyBtn.addEventListener("click", () => {
 
 refreshBtn.addEventListener("click", loadRequests);
 filter.addEventListener("change", loadRequests);
+closeModalBtn.addEventListener("click", () => requestModal.close());
 
 function getAdminKey() {
   return localStorage.getItem("brgyos_admin_key") || "";
@@ -64,17 +72,31 @@ function actionButtons(item) {
 }
 
 function render(items) {
+  currentItems = items;
   rows.innerHTML = items
     .map(
       (item) => `
-      <tr>
-        <td>${item.id}</td>
+      <tr data-id="${item.id}" class="clickable-row">
+        <td><button data-open="${item.id}" class="link-btn">${item.id}</button></td>
         <td>${item.fullName || "-"}</td>
         <td>${item.documentType || "-"}</td>
         <td>${item.address || "-"}</td>
         <td class="status">${item.status}</td>
         <td>${fmtDate(item.updatedAt)}</td>
         <td>${actionButtons(item)}</td>
+      </tr>
+    `
+    )
+    .join("");
+  historyRows.innerHTML = items
+    .filter((item) => item.status === "PDF_GENERATED" || item.status === "RELEASED")
+    .map(
+      (item) => `
+      <tr data-id="${item.id}" class="clickable-row">
+        <td><button data-open="${item.id}" class="link-btn">${item.id}</button></td>
+        <td>${item.fullName || "-"}</td>
+        <td>${item.status}</td>
+        <td>${fmtDate(item.updatedAt)}</td>
       </tr>
     `
     )
@@ -94,6 +116,35 @@ function render(items) {
       }
     });
   });
+
+  document.querySelectorAll("button[data-open]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.open;
+      const item = currentItems.find((x) => x.id === id);
+      if (!item) return;
+      openModal(item);
+    });
+  });
+}
+
+function openModal(item) {
+  modalTitle.textContent = `Request ${item.id}`;
+  modalBody.textContent =
+    `Name: ${item.fullName || "-"}\n` +
+    `Document: ${item.documentType || "-"}\n` +
+    `Address: ${item.address || "-"}\n` +
+    `Purpose: ${item.purpose || "-"}\n` +
+    `Pickup Date: ${item.pickupDate || "-"}\n` +
+    `Status: ${item.status}\n` +
+    `Fee: PHP ${item.serviceFee || "-"}\n` +
+    `PDF: ${item.pdfUrl || "-"}`;
+
+  const history = Array.isArray(item.history) ? item.history : [];
+  modalTimeline.innerHTML = history
+    .map((h) => `<li><strong>${fmtDate(h.at)}</strong> - ${h.action} (${h.note || "No note"})</li>`)
+    .join("");
+
+  requestModal.showModal();
 }
 
 async function loadRequests() {

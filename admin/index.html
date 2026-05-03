@@ -48,7 +48,32 @@
         <tbody id="rows"></tbody>
       </table>
     </section>
+
+    <section class="card table-card">
+      <h2>History (Processed)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Reference</th>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Updated</th>
+          </tr>
+        </thead>
+        <tbody id="historyRows"></tbody>
+      </table>
+    </section>
   </main>
+
+  <dialog id="requestModal">
+    <article>
+      <h3 id="modalTitle">Request Details</h3>
+      <pre id="modalBody"></pre>
+      <h4>Timeline</h4>
+      <ul id="modalTimeline"></ul>
+      <button id="closeModalBtn">Close</button>
+    </article>
+  </dialog>
 
   <script src="/admin/app.js"></script>
 </body>
