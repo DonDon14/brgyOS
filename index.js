@@ -131,6 +131,10 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
 
     if (/^confirm$/i.test(text) || payload === "CONFIRM") {
       const normalizedDraft = await normalizeRequestDraft(session.draft);
+      const validationError = validateDraft(normalizedDraft);
+      if (validationError) {
+        return asText(validationError);
+      }
       const request = createRequest(normalizedDraft);
       userSessions.delete(senderId);
       logCommissionEvent(request);
@@ -744,6 +748,23 @@ function normalizePickupDate(value) {
   return v;
 }
 
+function validateDraft(draft) {
+  if (!draft.documentType) return "Document type is required. Please go back and select a document.";
+  if (!draft.fullName || draft.fullName.trim().length < 5) {
+    return "Please provide a valid full name (at least 5 characters).";
+  }
+  if (!draft.address || draft.address.trim().length < 8) {
+    return "Please provide a complete address (at least 8 characters).";
+  }
+  if (!draft.purpose || draft.purpose.trim().length < 3) {
+    return "Please provide a valid purpose.";
+  }
+  if (!draft.pickupDate || draft.pickupDate.trim().length < 4) {
+    return "Please provide a valid pickup date.";
+  }
+  return "";
+}
+
 function getPreviousStep(step) {
   if (step === "awaiting_confirm") return "awaiting_pickup_date";
   if (step === "awaiting_pickup_date") return "awaiting_purpose";
@@ -952,9 +973,66 @@ app.post("/api/admin/requests/:id/release", requireAdminApiKey, async (req, res)
   return res.json({ ok: true, data: request });
 });
 
+app.get("/api/admin/export.csv", requireAdminApiKey, (_req, res) => {
+  const items = [...requests.values()].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
+
+  const headers = [
+    "reference_id",
+    "full_name",
+    "document_type",
+    "address",
+    "purpose",
+    "pickup_date",
+    "service_fee",
+    "status",
+    "pdf_url",
+    "created_at",
+    "updated_at",
+  ];
+
+  const escapeCsv = (value) => `"${String(value || "").replace(/"/g, '""')}"`;
+  const lines = [headers.join(",")];
+
+  for (const item of items) {
+    lines.push(
+      [
+        item.id,
+        item.fullName,
+        item.documentType,
+        item.address,
+        item.purpose,
+        item.pickupDate,
+        item.serviceFee,
+        item.status,
+        item.pdfUrl || "",
+        item.createdAt,
+        item.updatedAt,
+      ]
+        .map(escapeCsv)
+        .join(",")
+    );
+  }
+
+  const csv = lines.join("\n");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="brgyos-requests-${new Date().toISOString().slice(0, 10)}.csv"`);
+  return res.status(200).send(csv);
+});
+
+app.get("/api/admin/backup.json", requireAdminApiKey, (_req, res) => {
+  if (!fs.existsSync(REQUESTS_FILE)) {
+    return res.status(404).json({ error: "No backup file found." });
+  }
+  return res.download(REQUESTS_FILE, `brgyos-requests-backup-${new Date().toISOString().slice(0, 10)}.json`);
+});
+
 function requireAdminApiKey(req, res, next) {
   const headerKey = req.headers["x-admin-key"];
-  if (!headerKey || headerKey !== ADMIN_DASHBOARD_KEY) {
+  const queryKey = req.query.key;
+  const provided = headerKey || queryKey;
+  if (!provided || provided !== ADMIN_DASHBOARD_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   return next();

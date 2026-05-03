@@ -3,6 +3,8 @@ const historyRows = document.getElementById("historyRows");
 const msg = document.getElementById("msg");
 const filter = document.getElementById("statusFilter");
 const refreshBtn = document.getElementById("refreshBtn");
+const exportBtn = document.getElementById("exportBtn");
+const backupBtn = document.getElementById("backupBtn");
 const saveKeyBtn = document.getElementById("saveKeyBtn");
 const adminKeyInput = document.getElementById("adminKey");
 const requestModal = document.getElementById("requestModal");
@@ -23,6 +25,8 @@ saveKeyBtn.addEventListener("click", () => {
 
 refreshBtn.addEventListener("click", loadRequests);
 filter.addEventListener("change", loadRequests);
+exportBtn.addEventListener("click", downloadCsv);
+backupBtn.addEventListener("click", downloadBackup);
 closeModalBtn.addEventListener("click", () => requestModal.close());
 
 function getAdminKey() {
@@ -166,6 +170,24 @@ async function loadRequests() {
     rows.innerHTML = "";
     setMsg(error.message);
   }
+}
+
+async function downloadCsv() {
+  const key = getAdminKey();
+  if (!key) {
+    setMsg("Set admin key first.");
+    return;
+  }
+  window.open(`/api/admin/export.csv?key=${encodeURIComponent(key)}`, "_blank");
+}
+
+async function downloadBackup() {
+  const key = getAdminKey();
+  if (!key) {
+    setMsg("Set admin key first.");
+    return;
+  }
+  window.open(`/api/admin/backup.json?key=${encodeURIComponent(key)}`, "_blank");
 }
 
 loadRequests();
