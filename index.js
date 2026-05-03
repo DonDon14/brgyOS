@@ -93,7 +93,7 @@ app.post("/webhook", async (req, res) => {
 async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
   const text = String(rawText || "").trim();
   const payload = String(quickReplyPayload || "").trim();
-  if (!text) return null;
+  if (!text && !payload) return null;
   const detectedLang = detectResponseLanguage(text);
 
   if (isAdmin(senderId) && payload.startsWith("STAFF_")) {
@@ -148,7 +148,7 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
     return promptForStep(session.step, session.draft, session.lang);
   }
 
-  const intent = await analyzeMessageIntent(text);
+  const intent = await analyzeMessageIntent(text || payload);
 
   if (intent === "REQUEST") {
     userSessions.set(senderId, {
@@ -519,7 +519,7 @@ function promptForStep(step, draft = {}, lang = "en") {
         `Full Name: ${toTitleCase(draft.fullName || "")}\n` +
         `Address: ${toTitleCase(draft.address || "")}\n` +
         `Purpose: ${sentenceCase(draft.purpose || "")}\n` +
-        `Pickup Date: ${draft.pickupDate}\n` +
+      `Pickup Date: ${formatPickupDateForDisplay(draft.pickupDate)}\n` +
         `Service Fee: PHP ${SERVICE_FEE_PHP}`,
       [
         { title: localize(lang, "confirm"), payload: "CONFIRM" },
@@ -572,9 +572,37 @@ function parseDocumentValue(text, payload) {
 }
 
 function parsePickupDate(text, payload) {
-  if (payload === "DATE_TODAY") return "Today";
-  if (payload === "DATE_TOMORROW") return "Tomorrow";
-  return text;
+  const now = new Date();
+  const toPretty = (dateObj) =>
+    dateObj.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+  if (payload === "DATE_TODAY") {
+    return toPretty(now);
+  }
+
+  if (payload === "DATE_TOMORROW") {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    return toPretty(d);
+  }
+
+  const raw = String(text || "").trim();
+  if (!raw) return raw;
+
+  const withYear = /\b\d{4}\b/.test(raw) ? raw : `${raw}, ${now.getFullYear()}`;
+  const parsed = new Date(withYear);
+  if (!Number.isNaN(parsed.getTime())) {
+    return toPretty(parsed);
+  }
+  return toTitleCase(raw);
+}
+
+function formatPickupDateForDisplay(value) {
+  return String(value || "").trim();
 }
 
 function detectResponseLanguage(text) {
