@@ -62,6 +62,7 @@ app.post("/webhook", async (req, res) => {
       for (const event of events) {
         const senderId = event?.sender?.id;
         const incomingText = event?.message?.text;
+        const quickReplyPayload = event?.message?.quick_reply?.payload;
         const postbackPayload = event?.postback?.payload;
         if (senderId) {
           console.log("SENDER_PSID:", senderId);
@@ -73,7 +74,7 @@ app.post("/webhook", async (req, res) => {
 
         const reply = postbackPayload
           ? await handlePostback(senderId, postbackPayload)
-          : await handleIncomingMessage(senderId, incomingText);
+          : await handleIncomingMessage(senderId, incomingText, quickReplyPayload);
         if (reply) {
           await sendMessengerMessage(senderId, reply);
         }
@@ -87,9 +88,14 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-async function handleIncomingMessage(senderId, rawText) {
+async function handleIncomingMessage(senderId, rawText, quickReplyPayload) {
   const text = String(rawText || "").trim();
+  const payload = String(quickReplyPayload || "").trim();
   if (!text) return null;
+
+  if (isAdmin(senderId) && payload.startsWith("STAFF_")) {
+    return handleAdminQuickReply(payload);
+  }
 
   if (isAdmin(senderId) && isAdminIntent(text)) {
     return handleAdminCommand(senderId, text);
@@ -102,43 +108,14 @@ async function handleIncomingMessage(senderId, rawText) {
       step: "awaiting_document",
       draft: { senderId },
     });
-    return asText("What document do you need? (Clearance, Indigency, Residency, or Certificate)");
+    return promptForStep("awaiting_document");
   }
 
-  if (session.step === "awaiting_document") {
-    session.draft.documentType = text;
-    session.step = "awaiting_full_name";
+  if (session.step && (payload === "BACK" || /^back$/i.test(text))) {
+    const previousStep = getPreviousStep(session.step);
+    session.step = previousStep;
     userSessions.set(senderId, session);
-    return asText("Please provide your full name.");
-  }
-
-  if (session.step === "awaiting_full_name") {
-    session.draft.fullName = text;
-    session.step = "awaiting_purpose";
-    userSessions.set(senderId, session);
-    return asText("Please provide the purpose of request.");
-  }
-
-  if (session.step === "awaiting_purpose") {
-    session.draft.purpose = text;
-    session.step = "awaiting_pickup_date";
-    userSessions.set(senderId, session);
-    return asText("Preferred pickup date? (example: May 10, 2026)");
-  }
-
-  if (session.step === "awaiting_pickup_date") {
-    session.draft.pickupDate = text;
-    session.step = "awaiting_confirm";
-    userSessions.set(senderId, session);
-    return asText(
-      "Please confirm your request:\n" +
-      `Document: ${session.draft.documentType}\n` +
-      `Full Name: ${session.draft.fullName}\n` +
-      `Purpose: ${session.draft.purpose}\n` +
-      `Pickup Date: ${session.draft.pickupDate}\n` +
-      `Service Fee: PHP ${SERVICE_FEE_PHP}\n\n` +
-      "Reply CONFIRM to submit or CANCEL to stop."
-    );
+    return promptForStep(previousStep, session.draft);
   }
 
   if (session.step === "awaiting_confirm") {
@@ -147,7 +124,7 @@ async function handleIncomingMessage(senderId, rawText) {
       return asText("Request cancelled. Reply START anytime to create a new request.");
     }
 
-    if (/^confirm$/i.test(text)) {
+    if (/^confirm$/i.test(text) || payload === "CONFIRM") {
       const request = createRequest(session.draft);
       userSessions.delete(senderId);
       logCommissionEvent(request);
@@ -159,6 +136,12 @@ async function handleIncomingMessage(senderId, rawText) {
     }
 
     return asText("Reply CONFIRM to submit, or CANCEL to stop.");
+  }
+
+  if (session.step) {
+    applySessionInput(session, text, payload);
+    userSessions.set(senderId, session);
+    return promptForStep(session.step, session.draft);
   }
 
   if (/status\s+/i.test(text)) {
@@ -259,6 +242,15 @@ async function handlePostback(senderId, payload) {
   return asText("Unknown action.");
 }
 
+function handleAdminQuickReply(payload) {
+  if (payload === "STAFF_PENDING") return handleAdminCommand("", "show pending");
+  if (payload === "STAFF_APPROVE") return handleAdminCommand("", "approve");
+  if (payload === "STAFF_PDF") return handleAdminCommand("", "generate pdf");
+  if (payload === "STAFF_RELEASE") return handleAdminCommand("", "release");
+  if (payload === "STAFF_MENU") return makeStaffMenuQuickReply();
+  return asText("Unknown staff quick action.");
+}
+
 function createRequest(draft) {
   const id = `BRGY-${new Date().getFullYear()}-${String(requestCounter).padStart(4, "0")}`;
   requestCounter += 1;
@@ -351,40 +343,147 @@ function findLatestRequestForAction(command) {
 }
 
 function makeStaffMenu() {
-  return {
-    attachment: {
-      type: "template",
-      payload: {
-        template_type: "button",
-        text: "Staff Menu",
-        buttons: [
-          { type: "postback", title: "View Pending", payload: "SHOW_PENDING" },
-          { type: "postback", title: "Approve", payload: "APPROVE_LATEST" },
-        ],
-      },
-    },
-  };
+  return makeStaffMenuQuickReply();
 }
 
 function makePendingTemplate(request) {
-  return {
-    attachment: {
-      type: "template",
-      payload: {
-        template_type: "button",
-        text: `${request.id}\n${request.fullName}\n${request.documentType}\n${request.status}`,
-        buttons: [
-          { type: "postback", title: "Approve", payload: `APPROVE|${request.id}` },
-          { type: "postback", title: "Generate PDF", payload: `PDF|${request.id}` },
-          { type: "postback", title: "Release", payload: `RELEASE|${request.id}` },
-        ],
-      },
-    },
-  };
+  return asQuickReply(
+    `${request.id}\n${request.fullName}\n${request.documentType}\n${request.status}`,
+    [
+      { title: "Approve", payload: `STAFF_APPROVE` },
+      { title: "Generate PDF", payload: "STAFF_PDF" },
+      { title: "Release", payload: "STAFF_RELEASE" },
+      { title: "Menu", payload: "STAFF_MENU" },
+    ]
+  );
 }
 
 function asText(text) {
   return { text };
+}
+
+function asQuickReply(text, options) {
+  return {
+    text,
+    quick_replies: options.map((option) => ({
+      content_type: "text",
+      title: option.title,
+      payload: option.payload,
+    })),
+  };
+}
+
+function makeStaffMenuQuickReply() {
+  return asQuickReply("Staff Menu", [
+    { title: "View Pending", payload: "STAFF_PENDING" },
+    { title: "Approve", payload: "STAFF_APPROVE" },
+    { title: "Generate PDF", payload: "STAFF_PDF" },
+    { title: "Release", payload: "STAFF_RELEASE" },
+  ]);
+}
+
+function promptForStep(step, draft = {}) {
+  if (step === "awaiting_document") {
+    return asQuickReply("What document do you need?", [
+      { title: "Clearance", payload: "DOC_CLEARANCE" },
+      { title: "Indigency", payload: "DOC_INDIGENCY" },
+      { title: "Residency", payload: "DOC_RESIDENCY" },
+      { title: "Certificate", payload: "DOC_CERTIFICATE" },
+    ]);
+  }
+
+  if (step === "awaiting_full_name") {
+    return asQuickReply("Please provide your full name.", [{ title: "Back", payload: "BACK" }]);
+  }
+
+  if (step === "awaiting_address") {
+    return asQuickReply("Please provide your complete address.", [{ title: "Back", payload: "BACK" }]);
+  }
+
+  if (step === "awaiting_purpose") {
+    return asQuickReply("Please provide the purpose of request.", [{ title: "Back", payload: "BACK" }]);
+  }
+
+  if (step === "awaiting_pickup_date") {
+    return asQuickReply("Preferred pickup date?", [
+      { title: "Today", payload: "DATE_TODAY" },
+      { title: "Tomorrow", payload: "DATE_TOMORROW" },
+      { title: "Back", payload: "BACK" },
+    ]);
+  }
+
+  if (step === "awaiting_confirm") {
+    return asQuickReply(
+      "Please confirm your request:\n" +
+        `Document: ${draft.documentType}\n` +
+        `Full Name: ${draft.fullName}\n` +
+        `Address: ${draft.address}\n` +
+        `Purpose: ${draft.purpose}\n` +
+        `Pickup Date: ${draft.pickupDate}\n` +
+        `Service Fee: PHP ${SERVICE_FEE_PHP}`,
+      [
+        { title: "Confirm", payload: "CONFIRM" },
+        { title: "Back", payload: "BACK" },
+        { title: "Cancel", payload: "CANCEL" },
+      ]
+    );
+  }
+
+  return asText("Please continue.");
+}
+
+function applySessionInput(session, text, payload) {
+  if (session.step === "awaiting_document") {
+    session.draft.documentType = parseDocumentValue(text, payload);
+    session.step = "awaiting_full_name";
+    return;
+  }
+
+  if (session.step === "awaiting_full_name") {
+    session.draft.fullName = text;
+    session.step = "awaiting_address";
+    return;
+  }
+
+  if (session.step === "awaiting_address") {
+    session.draft.address = text;
+    session.step = "awaiting_purpose";
+    return;
+  }
+
+  if (session.step === "awaiting_purpose") {
+    session.draft.purpose = text;
+    session.step = "awaiting_pickup_date";
+    return;
+  }
+
+  if (session.step === "awaiting_pickup_date") {
+    session.draft.pickupDate = parsePickupDate(text, payload);
+    session.step = "awaiting_confirm";
+  }
+}
+
+function parseDocumentValue(text, payload) {
+  if (payload === "DOC_CLEARANCE") return "Clearance";
+  if (payload === "DOC_INDIGENCY") return "Indigency";
+  if (payload === "DOC_RESIDENCY") return "Residency";
+  if (payload === "DOC_CERTIFICATE") return "Certificate";
+  return text;
+}
+
+function parsePickupDate(text, payload) {
+  if (payload === "DATE_TODAY") return "Today";
+  if (payload === "DATE_TOMORROW") return "Tomorrow";
+  return text;
+}
+
+function getPreviousStep(step) {
+  if (step === "awaiting_confirm") return "awaiting_pickup_date";
+  if (step === "awaiting_pickup_date") return "awaiting_purpose";
+  if (step === "awaiting_purpose") return "awaiting_address";
+  if (step === "awaiting_address") return "awaiting_full_name";
+  if (step === "awaiting_full_name") return "awaiting_document";
+  return "awaiting_document";
 }
 
 async function generateGeminiReply(userText) {
