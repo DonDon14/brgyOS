@@ -9,6 +9,7 @@ const requestModal = document.getElementById("requestModal");
 const modalTitle = document.getElementById("modalTitle");
 const modalBody = document.getElementById("modalBody");
 const modalTimeline = document.getElementById("modalTimeline");
+const modalPdfLink = document.getElementById("modalPdfLink");
 const closeModalBtn = document.getElementById("closeModalBtn");
 let currentItems = [];
 
@@ -65,7 +66,7 @@ function actionButtons(item) {
     buttons.push(`<button data-action="release" data-id="${item.id}">Release</button>`);
   }
   if (item.pdfUrl) {
-    buttons.push(`<a href="${item.pdfUrl}" target="_blank" rel="noreferrer"><button class="secondary" type="button">Open PDF</button></a>`);
+    buttons.push(`<a class="secondary-link" href="${item.pdfUrl}" target="_blank" rel="noreferrer">Open PDF</a>`);
   }
 
   return `<div class="actions">${buttons.join("")}</div>`;
@@ -136,8 +137,15 @@ function openModal(item) {
     `Purpose: ${item.purpose || "-"}\n` +
     `Pickup Date: ${item.pickupDate || "-"}\n` +
     `Status: ${item.status}\n` +
-    `Fee: PHP ${item.serviceFee || "-"}\n` +
-    `PDF: ${item.pdfUrl || "-"}`;
+    `Fee: PHP ${item.serviceFee || "-"}`;
+
+  if (item.pdfUrl) {
+    modalPdfLink.href = item.pdfUrl;
+    modalPdfLink.style.display = "inline-block";
+  } else {
+    modalPdfLink.href = "#";
+    modalPdfLink.style.display = "none";
+  }
 
   const history = Array.isArray(item.history) ? item.history : [];
   modalTimeline.innerHTML = history

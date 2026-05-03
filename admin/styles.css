@@ -40,6 +40,15 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .actions button { padding: 6px 10px; font-size: 12px; }
+.secondary-link {
+  display: inline-block;
+  background: #475467;
+  color: #fff;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  text-decoration: none;
+}
 .status { font-weight: 600; }
 .link-btn {
   background: transparent;
