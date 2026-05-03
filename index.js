@@ -196,7 +196,7 @@ async function handleAdminCommand(_senderId, commandText) {
     request.updatedAt = new Date().toISOString();
     persistRequests();
     await notifyCustomer(request.senderId, `Your request ${request.id} is APPROVED.`);
-    return asText(`${request.id} approved. Next: generate pdf`);
+    return makeApproveResultQuickReply(request);
   }
 
   if (command === "/pdf") {
@@ -208,7 +208,7 @@ async function handleAdminCommand(_senderId, commandText) {
       request.senderId,
       `Your document for ${request.id} is ready.\nPDF: ${request.pdfUrl}`
     );
-    return asText(`${request.id} PDF generated: ${request.pdfUrl}`);
+    return makePdfResultQuickReply(request);
   }
 
   if (command === "/release") {
@@ -216,7 +216,7 @@ async function handleAdminCommand(_senderId, commandText) {
     request.updatedAt = new Date().toISOString();
     persistRequests();
     await notifyCustomer(request.senderId, `Your request ${request.id} is marked as RELEASED.`);
-    return asText(`${request.id} marked as released.`);
+    return makeReleaseResultQuickReply(request);
   }
 
   return asText(
@@ -356,6 +356,29 @@ function makePendingTemplate(request) {
       { title: "Menu", payload: "STAFF_MENU" },
     ]
   );
+}
+
+function makeApproveResultQuickReply(request) {
+  return asQuickReply(`${request.id} approved. Choose next action.`, [
+    { title: "Generate PDF", payload: "STAFF_PDF" },
+    { title: "Release", payload: "STAFF_RELEASE" },
+    { title: "Menu", payload: "STAFF_MENU" },
+  ]);
+}
+
+function makePdfResultQuickReply(request) {
+  return asQuickReply(`${request.id} PDF generated. Choose next action.`, [
+    { title: "Release", payload: "STAFF_RELEASE" },
+    { title: "View Pending", payload: "STAFF_PENDING" },
+    { title: "Menu", payload: "STAFF_MENU" },
+  ]);
+}
+
+function makeReleaseResultQuickReply(request) {
+  return asQuickReply(`${request.id} marked as released.`, [
+    { title: "View Pending", payload: "STAFF_PENDING" },
+    { title: "Menu", payload: "STAFF_MENU" },
+  ]);
 }
 
 function asText(text) {
