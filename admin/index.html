@@ -12,7 +12,10 @@
       <div class="brand">BrgyOS</div>
       <div class="topbar-subtitle">Barangay service desk</div>
     </div>
-    <div class="portal-tag">Staff Portal</div>
+    <div class="portal-actions">
+      <span class="portal-tag">Staff Portal</span>
+      <button id="logoutBtn" class="ghost-btn" type="button">Sign out</button>
+    </div>
   </header>
   <div class="layout">
     <aside class="sidenav">
@@ -33,12 +36,7 @@
         <a class="primary-link" href="/admin/requests.html">Open Queue</a>
       </header>
 
-      <section class="auth card">
-        <label for="adminKey">Staff Access Key</label>
-        <input id="adminKey" type="password" placeholder="Paste staff access key" />
-        <button id="saveKeyBtn">Unlock</button>
-        <span id="msg"></span>
-      </section>
+      <p id="msg" class="page-message"></p>
 
       <section class="stat-grid">
         <article class="stat-card accent-blue">

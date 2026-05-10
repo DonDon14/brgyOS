@@ -1081,8 +1081,16 @@ function getFirestoreDb() {
 async function bootstrapData() {
   ensureStorage();
   if (isFirestoreConfigured()) {
-    await loadFromFirestore();
-  } else {
+    try {
+      await loadFromFirestore();
+      return;
+    } catch (error) {
+      firestoreDisabled = true;
+      console.error("Firestore bootstrap failed, falling back to local-json:", error?.message || error);
+    }
+  }
+
+  if (!barangays.size && !requests.size && !staffMembers.size) {
     loadPilotDataFromDisk();
   }
 }

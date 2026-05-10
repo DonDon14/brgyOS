@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/admin/styles.css" />
 </head>
 <body>
-  <header class="topbar"><div><div class="brand">BrgyOS</div><div class="topbar-subtitle">Barangay service desk</div></div><div class="portal-tag">Staff Portal</div></header>
+  <header class="topbar"><div><div class="brand">BrgyOS</div><div class="topbar-subtitle">Barangay service desk</div></div><div class="portal-actions"><span class="portal-tag">Staff Portal</span><button id="logoutBtn" class="ghost-btn" type="button">Sign out</button></div></header>
   <div class="layout">
     <aside class="sidenav">
       <h3>Barangay Portal</h3>
@@ -24,11 +24,6 @@
           <p>Review PDF-ready and released requests with their activity timeline.</p>
         </div>
       </header>
-      <section class="auth card">
-        <label for="adminKey">Staff Access Key</label>
-        <input id="adminKey" type="password" placeholder="Paste staff access key" />
-        <button id="saveKeyBtn">Unlock</button>
-      </section>
       <section class="toolbar card">
         <label for="barangayFilter">Barangay<select id="barangayFilter"></select></label>
         <button id="refreshBtn">Refresh</button>

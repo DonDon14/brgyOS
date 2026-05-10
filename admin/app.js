@@ -8,6 +8,8 @@ const exportBtn = document.getElementById("exportBtn");
 const backupBtn = document.getElementById("backupBtn");
 const saveKeyBtn = document.getElementById("saveKeyBtn");
 const adminKeyInput = document.getElementById("adminKey");
+const loginForm = document.getElementById("loginForm");
+const logoutBtn = document.getElementById("logoutBtn");
 const requestModal = document.getElementById("requestModal");
 const modalTitle = document.getElementById("modalTitle");
 const modalBody = document.getElementById("modalBody");
@@ -20,16 +22,32 @@ const approvedCount = document.getElementById("approvedCount");
 const pdfReadyCount = document.getElementById("pdfReadyCount");
 const releasedCount = document.getElementById("releasedCount");
 let currentItems = [];
+const isLoginPage = Boolean(loginForm);
 
 if (adminKeyInput) {
   adminKeyInput.value = localStorage.getItem("brgyos_staff_key") || localStorage.getItem("brgyos_admin_key") || "";
 }
 
-if (saveKeyBtn) {
-  saveKeyBtn.addEventListener("click", () => {
-    localStorage.setItem("brgyos_staff_key", (adminKeyInput?.value || "").trim());
-    setMsg("Access key saved for this browser.");
-    loadPageData();
+if (!isLoginPage && !getAdminKey()) {
+  redirectToLogin();
+}
+
+if (loginForm) {
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const key = (adminKeyInput?.value || "").trim();
+    if (!key) {
+      setMsg("Enter your staff password.", "error");
+      return;
+    }
+    await signIn(key);
+  });
+}
+
+if (logoutBtn) {
+  logoutBtn.addEventListener("click", () => {
+    clearStoredKeys();
+    redirectToLogin();
   });
 }
 
@@ -44,10 +62,52 @@ function getAdminKey() {
   return localStorage.getItem("brgyos_staff_key") || localStorage.getItem("brgyos_admin_key") || "";
 }
 
+function clearStoredKeys() {
+  localStorage.removeItem("brgyos_staff_key");
+  localStorage.removeItem("brgyos_admin_key");
+}
+
+function redirectToLogin() {
+  const currentPath = `${window.location.pathname}${window.location.search}`;
+  const target = `/admin/login.html?next=${encodeURIComponent(currentPath)}`;
+  window.location.replace(target);
+}
+
+function redirectAfterLogin() {
+  const params = new URLSearchParams(window.location.search);
+  const next = params.get("next");
+  if (next && next.startsWith("/admin/") && !next.includes("login.html")) {
+    window.location.assign(next);
+    return;
+  }
+  window.location.assign("/admin/");
+}
+
 function setMsg(text, tone = "") {
   if (!msg) return;
   msg.textContent = text;
   msg.dataset.tone = tone;
+}
+
+async function signIn(key) {
+  try {
+    if (saveKeyBtn) saveKeyBtn.disabled = true;
+    setMsg("Signing in...");
+    const response = await fetch("/api/admin/barangays", {
+      headers: { "x-admin-key": key },
+    });
+    if (!response.ok) {
+      throw new Error(response.status === 401 ? "Invalid staff password." : `Sign in failed: ${response.status}`);
+    }
+    localStorage.setItem("brgyos_staff_key", key);
+    localStorage.removeItem("brgyos_admin_key");
+    setMsg("Signed in.", "success");
+    redirectAfterLogin();
+  } catch (error) {
+    setMsg(error.message, "error");
+  } finally {
+    if (saveKeyBtn) saveKeyBtn.disabled = false;
+  }
 }
 
 async function api(path, options = {}) {
@@ -59,6 +119,11 @@ async function api(path, options = {}) {
   const response = await fetch(path, Object.assign({}, options, { headers }));
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
+    if (response.status === 401 && !isLoginPage) {
+      clearStoredKeys();
+      redirectToLogin();
+      return {};
+    }
     throw new Error(payload.error || `Request failed: ${response.status}`);
   }
   return response.json();
@@ -291,7 +356,10 @@ async function loadRequests() {
 }
 
 async function downloadFile(path, fallbackName) {
-  if (!getAdminKey()) return setMsg("Enter and save the staff access key first.", "error");
+  if (!getAdminKey()) {
+    redirectToLogin();
+    return;
+  }
   const barangayId = barangayFilter ? barangayFilter.value || "" : "";
   const url = path.includes("?")
     ? `${path}&barangayId=${encodeURIComponent(barangayId)}`
@@ -350,4 +418,8 @@ async function loadPageData() {
   if (rows || historyRows || snapshotText) await loadRequests();
 }
 
-loadPageData();
+if (isLoginPage && getAdminKey()) {
+  redirectAfterLogin();
+} else if (!isLoginPage && getAdminKey()) {
+  loadPageData();
+}

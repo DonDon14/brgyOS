@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BrgyOS Staff Login</title>
+  <link rel="stylesheet" href="/admin/styles.css" />
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <section class="login-panel">
+      <div class="brand">BrgyOS</div>
+      <p class="topbar-subtitle">Barangay service desk</p>
+      <h1>Staff Login</h1>
+      <form id="loginForm" class="login-form">
+        <label for="adminKey">Password</label>
+        <input id="adminKey" type="password" autocomplete="current-password" autofocus required />
+        <button id="saveKeyBtn" type="submit">Sign in</button>
+        <p id="msg" class="page-message"></p>
+      </form>
+    </section>
+  </main>
+  <script src="/admin/app.js"></script>
+</body>
+</html>
