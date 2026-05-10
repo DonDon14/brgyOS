@@ -719,7 +719,7 @@ function applySessionInput(session, text, payload) {
   }
 
   if (session.step === "awaiting_purpose") {
-    session.draft.purpose = sentenceCase(text);
+    session.draft.purpose = normalizePurpose(text);
     session.step = "awaiting_pickup_date";
     return;
   }
@@ -865,7 +865,7 @@ async function normalizeRequestDraft(draft) {
     ...draft,
     fullName: formatFullName(draft.fullName || ""),
     address: normalizeAddress(draft.address || "", barangay),
-    purpose: sentenceCase(draft.purpose || ""),
+    purpose: normalizePurpose(draft.purpose || ""),
     pickupDate: normalizePickupDate(draft.pickupDate || ""),
   };
 
@@ -902,7 +902,7 @@ async function normalizeRequestDraft(draft) {
       ...draft,
       fullName: formatFullName(parsed.fullName || fallback.fullName),
       address: normalizeAddress(parsed.address || fallback.address, barangay),
-      purpose: parsed.purpose || fallback.purpose,
+      purpose: normalizePurpose(parsed.purpose || fallback.purpose),
       pickupDate: parsed.pickupDate || fallback.pickupDate,
     };
   } catch (_error) {
@@ -970,6 +970,27 @@ function sentenceCase(value) {
   const v = String(value).trim();
   if (!v) return v;
   return v.charAt(0).toUpperCase() + v.slice(1);
+}
+
+function normalizePurpose(value) {
+  const raw = String(value || "").trim();
+  const compact = raw.toLowerCase();
+  const schoolWords = /(school|eskwela|eskuyla|skwela|iskwela|tuition|enroll|enrol|student|scholar|scholarship|requirement|requirements|education|educational|gamition sa eskwelahan|gamiton sa eskwelahan|para sa eskwelahan|pang eskwela|pang-eskwela)/i;
+  const workWords = /(work|job|employment|trabaho|pang trabaho|pang-trabaho|apply trabaho|employer|pre-employment)/i;
+  const medicalWords = /(medical|hospital|clinic|health|tambal|tambalan|pagamot|pa-ospital|ospital)/i;
+  const financialWords = /(financial|assistance|cash aid|ayuda|tabang|benefit|benefits|dswd|4ps)/i;
+  const legalWords = /(legal|court|police|case|hearing|notary|affidavit|requirement sa korte)/i;
+  const travelWords = /(travel|passport|visa|abroad|bakasyon|biyahe|ofw)/i;
+  const housingWords = /(housing|house|home|residency|residence|rental|rent|balay|puyo)/i;
+
+  if (schoolWords.test(compact)) return "School Requirements";
+  if (workWords.test(compact)) return "Employment Requirements";
+  if (medicalWords.test(compact)) return "Medical Assistance";
+  if (financialWords.test(compact)) return "Financial Assistance";
+  if (legalWords.test(compact)) return "Legal Requirements";
+  if (travelWords.test(compact)) return "Travel Requirements";
+  if (housingWords.test(compact)) return "Residence Requirements";
+  return sentenceCase(raw);
 }
 
 function normalizePickupDate(value) {
@@ -1466,7 +1487,7 @@ function drawDocumentFooter(doc, request) {
 function buildDocumentTemplate(request, issueDate, fullAddress) {
   const fullName = formatFullName(request.fullName || "");
   const address = fullAddress;
-  const purpose = sentenceCase(request.purpose || "legal purpose");
+  const purpose = normalizePurpose(request.purpose || "legal purpose");
   const type = String(request.documentType || "").toLowerCase();
 
   if (type.includes("indigency")) {
@@ -1540,11 +1561,65 @@ app.get("/api/health", (_req, res) => {
 
 app.get("/api/admin/barangays", requireStaffApiKey, async (_req, res) => {
   await bootstrapPromise;
-  const data = [...barangays.values()].map((barangay) => ({
+  const data = getVisibleBarangays(_req.staffContext).map((barangay) => ({
     id: barangay.id,
     name: barangay.name || barangay.id,
   }));
   return res.json({ data });
+});
+
+app.get("/api/admin/session", requireStaffApiKey, async (req, res) => {
+  await bootstrapPromise;
+  const context = req.staffContext || {};
+  const barangay = context.barangayId ? barangays.get(context.barangayId) : null;
+  return res.json({
+    data: {
+      role: context.role || "staff",
+      scope: context.scope || "barangay",
+      barangayId: context.barangayId || "",
+      barangayName: barangay?.name || (context.scope === "all" ? "All barangays" : context.barangayId || "Barangay"),
+    },
+  });
+});
+
+app.post("/api/admin/login", async (req, res) => {
+  await bootstrapPromise;
+  const username = String(req.body?.username || "").trim().toLowerCase();
+  const password = String(req.body?.password || "");
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username and password are required." });
+  }
+
+  for (const staff of staffMembers.values()) {
+    if (staff.active === false) continue;
+    if (String(staff.username || "").trim().toLowerCase() === username && staff.password === password) {
+      const token = staff.accessKey || `staff_${staff.id}_${Date.now()}`;
+      staff.accessKey = token;
+      staff.updatedAt = new Date().toISOString();
+      await persistStaffMembers();
+      const barangay = barangays.get(staff.barangayId || "default");
+      return res.json({
+        ok: true,
+        token,
+        data: {
+          staffId: staff.id,
+          role: staff.role || "staff",
+          barangayId: staff.barangayId || "default",
+          barangayName: barangay?.name || staff.barangayId || "Barangay",
+        },
+      });
+    }
+  }
+
+  if (username === "global" && STAFF_DASHBOARD_KEY && password === STAFF_DASHBOARD_KEY) {
+    return res.json({
+      ok: true,
+      token: STAFF_DASHBOARD_KEY,
+      data: { staffId: "global", role: "owner", barangayId: "", barangayName: "All barangays" },
+    });
+  }
+
+  return res.status(401).json({ error: "Invalid username or password." });
 });
 
 app.get("/api/admin/requests", requireStaffApiKey, async (req, res) => {
@@ -1555,9 +1630,7 @@ app.get("/api/admin/requests", requireStaffApiKey, async (req, res) => {
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   );
 
-  if (barangayId) {
-    items = items.filter((item) => item.barangayId === barangayId);
-  }
+  items = scopeRequestsForStaff(items, req.staffContext, barangayId);
 
   if (status !== "ALL") {
     items = items.filter((item) => item.status === status);
@@ -1570,6 +1643,7 @@ app.post("/api/admin/requests/:id/approve", requireStaffApiKey, async (req, res)
   await bootstrapPromise;
   const request = requests.get(String(req.params.id || "").toUpperCase());
   if (!request) return res.status(404).json({ error: "Request not found." });
+  if (!canAccessRequest(req.staffContext, request)) return res.status(403).json({ error: "Request belongs to another barangay." });
 
   await approveAndGeneratePdf(request, "dashboard");
   await notifyCustomer(
@@ -1586,6 +1660,7 @@ app.post("/api/admin/requests/:id/pdf", requireStaffApiKey, async (req, res) => 
   await bootstrapPromise;
   const request = requests.get(String(req.params.id || "").toUpperCase());
   if (!request) return res.status(404).json({ error: "Request not found." });
+  if (!canAccessRequest(req.staffContext, request)) return res.status(403).json({ error: "Request belongs to another barangay." });
 
   request.pdfUrl = await generateDocumentPdf(request);
   await updateRequestStatus(request, "PDF_GENERATED", "PDF generated from dashboard");
@@ -1598,6 +1673,7 @@ app.post("/api/admin/requests/:id/release", requireStaffApiKey, async (req, res)
   await bootstrapPromise;
   const request = requests.get(String(req.params.id || "").toUpperCase());
   if (!request) return res.status(404).json({ error: "Request not found." });
+  if (!canAccessRequest(req.staffContext, request)) return res.status(403).json({ error: "Request belongs to another barangay." });
 
   await updateRequestStatus(request, "RELEASED", "Released from dashboard");
   await notifyCustomer(request.senderId, `Your request ${request.id} is marked as RELEASED.`, request.barangayId);
@@ -1611,7 +1687,7 @@ app.get("/api/admin/export.csv", requireStaffApiKey, async (req, res) => {
   const items = [...requests.values()].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
   );
-  const scoped = barangayId ? items.filter((item) => item.barangayId === barangayId) : items;
+  const scoped = scopeRequestsForStaff(items, req.staffContext, barangayId);
 
   const headers = [
     "reference_id",
@@ -1656,9 +1732,15 @@ app.get("/api/admin/export.csv", requireStaffApiKey, async (req, res) => {
   return res.status(200).send(csv);
 });
 
-app.get("/api/admin/backup.json", requireStaffApiKey, async (_req, res) => {
+app.get("/api/admin/backup.json", requireStaffApiKey, async (req, res) => {
   await bootstrapPromise;
-  const payload = { requests: [...requests.values()], barangays: [...barangays.values()], staff: [...staffMembers.values()] };
+  const scopedRequests = scopeRequestsForStaff([...requests.values()], req.staffContext, "");
+  const visibleBarangays = getVisibleBarangays(req.staffContext);
+  const payload = {
+    requests: scopedRequests,
+    barangays: visibleBarangays,
+    staff: req.staffContext?.scope === "all" ? [...staffMembers.values()] : [],
+  };
   return res.status(200).json(payload);
 });
 
@@ -1747,7 +1829,10 @@ app.post("/api/owner/staff", requireOwnerApiKey, async (req, res) => {
     name: input.name || id,
     barangayId: input.barangayId || "default",
     role: input.role || "staff",
+    username: String(input.username || id).trim().toLowerCase(),
+    password: input.password || "",
     psid: input.psid || "",
+    accessKey: input.accessKey || "",
     active: input.active !== false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -1766,7 +1851,10 @@ app.patch("/api/owner/staff/:id", requireOwnerApiKey, async (req, res) => {
     "name",
     "barangayId",
     "role",
+    "username",
+    "password",
     "psid",
+    "accessKey",
     "active",
   ]), { updatedAt: new Date().toISOString() });
   staffMembers.set(id, existing);
@@ -1782,8 +1870,37 @@ function pickAllowedFields(input, allowedFields) {
   return output;
 }
 
-function requireStaffApiKey(req, res, next) {
-  return requireApiKey(req, res, next, STAFF_DASHBOARD_KEY, "Staff access key is not configured.");
+async function requireStaffApiKey(req, res, next) {
+  await bootstrapPromise;
+  const headerKey = req.headers["x-admin-key"];
+  const provided = Array.isArray(headerKey) ? headerKey[0] : headerKey;
+  if (!provided) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  if (STAFF_DASHBOARD_KEY && provided === STAFF_DASHBOARD_KEY) {
+    req.staffContext = { scope: "all", role: "owner", staffId: "global" };
+    return next();
+  }
+
+  for (const staff of staffMembers.values()) {
+    if (staff.active === false) continue;
+    if (staff.accessKey && staff.accessKey === provided) {
+      req.staffContext = {
+        scope: staff.role === "owner" ? "all" : "barangay",
+        role: staff.role || "staff",
+        staffId: staff.id,
+        barangayId: staff.barangayId || "default",
+      };
+      return next();
+    }
+  }
+
+  if (!STAFF_DASHBOARD_KEY && ![...staffMembers.values()].some((staff) => staff.accessKey)) {
+    return res.status(503).json({ error: "Staff access key is not configured." });
+  }
+
+  return res.status(401).json({ error: "Unauthorized" });
 }
 
 function requireOwnerApiKey(req, res, next) {
@@ -1800,4 +1917,23 @@ function requireApiKey(req, res, next, expectedKey, missingMessage) {
     return res.status(401).json({ error: "Unauthorized" });
   }
   return next();
+}
+
+function getVisibleBarangays(context = {}) {
+  if (context.scope === "all") return [...barangays.values()];
+  const barangay = barangays.get(context.barangayId || "default");
+  return barangay ? [barangay] : [];
+}
+
+function scopeRequestsForStaff(items, context = {}, requestedBarangayId = "") {
+  if (context.scope === "all") {
+    return requestedBarangayId ? items.filter((item) => item.barangayId === requestedBarangayId) : items;
+  }
+  const scopedBarangayId = context.barangayId || "default";
+  return items.filter((item) => item.barangayId === scopedBarangayId);
+}
+
+function canAccessRequest(context = {}, request) {
+  if (context.scope === "all") return true;
+  return request?.barangayId === (context.barangayId || "default");
 }

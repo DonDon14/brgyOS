@@ -10,7 +10,7 @@
   <header class="topbar"><div><div class="brand">BrgyOS</div><div class="topbar-subtitle">Barangay service desk</div></div><div class="portal-actions"><span class="portal-tag">Staff Portal</span><button id="logoutBtn" class="ghost-btn" type="button">Sign out</button></div></header>
   <div class="layout">
     <aside class="sidenav">
-      <h3>Barangay Portal</h3>
+      <h3 id="portalBarangayName">Barangay Portal</h3>
       <a class="nav-link" href="/admin/">Dashboard</a>
       <a class="nav-link active" href="/admin/requests.html">Request Queue</a>
       <a class="nav-link" href="/admin/history.html">History</a>
@@ -49,6 +49,7 @@
     <article>
       <h3 id="modalTitle">Request Details</h3>
       <div id="modalBody" class="detail-grid"></div>
+      <iframe id="modalPdfPreview" class="pdf-preview" title="PDF preview"></iframe>
       <p><a id="modalPdfLink" href="#" target="_blank" rel="noreferrer">Open PDF</a></p>
       <h4>Timeline</h4>
       <ul id="modalTimeline"></ul>

@@ -115,7 +115,7 @@ async function loadStaff() {
   const items = result.data || [];
   clearNode(staffRows);
   if (!items.length) {
-    emptyRow(staffRows, 6, "No staff accounts yet. Add the barangay staff who will process requests.");
+    emptyRow(staffRows, 7, "No staff accounts yet. Add the barangay staff who will process requests.");
     return items;
   }
 
@@ -126,6 +126,7 @@ async function loadStaff() {
       td(s.name),
       td(roleLabel(s.role)),
       td(s.barangayId),
+      td(s.username || "-"),
       td(s.psid),
       td(s.active === false ? "Inactive" : "Active")
     );
@@ -214,11 +215,13 @@ if (createStaffBtn) {
           name: value("staffName"),
           barangayId: staffBarangay?.value,
           role: document.getElementById("staffRole")?.value,
+          username: value("staffUsername"),
+          password: value("staffPassword"),
           psid: value("staffPsid"),
         }),
       });
       setMsg("Staff member created.", "success");
-      clearInputs(["staffId", "staffName", "staffPsid"]);
+      clearInputs(["staffId", "staffName", "staffUsername", "staffPassword", "staffPsid"]);
       await loadStaff();
     } catch (e) {
       setMsg(e.message, "error");

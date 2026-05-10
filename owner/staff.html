@@ -42,6 +42,8 @@
             <option value="barangay_admin">barangay_admin</option>
             <option value="owner">owner</option>
           </select></label>
+          <label>Username<input id="staffUsername" placeholder="anei-admin" /></label>
+          <label>Password<input id="staffPassword" type="password" placeholder="temporary password" /></label>
           <label>Messenger PSID<input id="staffPsid" placeholder="Messenger PSID" /></label>
         </div>
         <div class="form-actions">
@@ -52,7 +54,7 @@
       <section class="card table-card">
         <h2>Staff List</h2>
         <table>
-          <thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Barangay</th><th>PSID</th><th>Status</th></tr></thead>
+          <thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Barangay</th><th>Username</th><th>PSID</th><th>Status</th></tr></thead>
           <tbody id="staffRows"></tbody>
         </table>
       </section>

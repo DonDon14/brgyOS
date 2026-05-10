@@ -8,6 +8,8 @@ const exportBtn = document.getElementById("exportBtn");
 const backupBtn = document.getElementById("backupBtn");
 const saveKeyBtn = document.getElementById("saveKeyBtn");
 const adminKeyInput = document.getElementById("adminKey");
+const staffUsernameInput = document.getElementById("staffUsername");
+const staffPasswordInput = document.getElementById("staffPassword");
 const loginForm = document.getElementById("loginForm");
 const logoutBtn = document.getElementById("logoutBtn");
 const requestModal = document.getElementById("requestModal");
@@ -15,13 +17,16 @@ const modalTitle = document.getElementById("modalTitle");
 const modalBody = document.getElementById("modalBody");
 const modalTimeline = document.getElementById("modalTimeline");
 const modalPdfLink = document.getElementById("modalPdfLink");
+const modalPdfPreview = document.getElementById("modalPdfPreview");
 const closeModalBtn = document.getElementById("closeModalBtn");
 const snapshotText = document.getElementById("snapshotText");
 const pendingCount = document.getElementById("pendingCount");
 const approvedCount = document.getElementById("approvedCount");
 const pdfReadyCount = document.getElementById("pdfReadyCount");
 const releasedCount = document.getElementById("releasedCount");
+const portalBarangayName = document.getElementById("portalBarangayName");
 let currentItems = [];
+let currentSession = null;
 const isLoginPage = Boolean(loginForm);
 
 if (adminKeyInput) {
@@ -35,12 +40,13 @@ if (!isLoginPage && !getAdminKey()) {
 if (loginForm) {
   loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const key = (adminKeyInput?.value || "").trim();
-    if (!key) {
-      setMsg("Enter your staff password.", "error");
+    const username = (staffUsernameInput?.value || "").trim();
+    const password = staffPasswordInput?.value || "";
+    if (!username || !password) {
+      setMsg("Enter your username and password.", "error");
       return;
     }
-    await signIn(key);
+    await signIn(username, password);
   });
 }
 
@@ -89,17 +95,20 @@ function setMsg(text, tone = "") {
   msg.dataset.tone = tone;
 }
 
-async function signIn(key) {
+async function signIn(username, password) {
   try {
     if (saveKeyBtn) saveKeyBtn.disabled = true;
     setMsg("Signing in...");
-    const response = await fetch("/api/admin/barangays", {
-      headers: { "x-admin-key": key },
+    const response = await fetch("/api/admin/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
     });
     if (!response.ok) {
-      throw new Error(response.status === 401 ? "Invalid staff password." : `Sign in failed: ${response.status}`);
+      throw new Error(response.status === 401 ? "Invalid username or password." : `Sign in failed: ${response.status}`);
     }
-    localStorage.setItem("brgyos_staff_key", key);
+    const payload = await response.json();
+    localStorage.setItem("brgyos_staff_key", payload.token || "");
     localStorage.removeItem("brgyos_admin_key");
     setMsg("Signed in.", "success");
     redirectAfterLogin();
@@ -249,9 +258,17 @@ function openModal(item) {
   if (item.pdfUrl) {
     modalPdfLink.href = item.pdfUrl;
     modalPdfLink.style.display = "inline-block";
+    if (modalPdfPreview) {
+      modalPdfPreview.src = item.pdfUrl;
+      modalPdfPreview.style.display = "block";
+    }
   } else {
     modalPdfLink.removeAttribute("href");
     modalPdfLink.style.display = "none";
+    if (modalPdfPreview) {
+      modalPdfPreview.removeAttribute("src");
+      modalPdfPreview.style.display = "none";
+    }
   }
 
   clearNode(modalTimeline);
@@ -412,8 +429,25 @@ async function loadBarangays() {
   }
 }
 
+async function loadSession() {
+  if (!portalBarangayName) return;
+  try {
+    const result = await api("/api/admin/session");
+    const session = result.data || {};
+    currentSession = session;
+    portalBarangayName.textContent = session.barangayName || "Barangay Portal";
+    if (barangayFilter && session.scope !== "all") {
+      const toolbarLabel = barangayFilter.closest("label");
+      if (toolbarLabel) toolbarLabel.style.display = "none";
+    }
+  } catch {
+    portalBarangayName.textContent = "Barangay Portal";
+  }
+}
+
 async function loadPageData() {
-  await loadBarangays();
+  await loadSession();
+  if (!currentSession || currentSession.scope === "all") await loadBarangays();
   if (rows || historyRows || snapshotText) await loadRequests();
 }
 
