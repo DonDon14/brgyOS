@@ -177,8 +177,7 @@ function appendActions(container, item) {
   actions.className = "actions";
 
   const actionMap = {
-    PENDING_APPROVAL: { label: "Approve", action: "approve" },
-    APPROVED: { label: "Generate PDF", action: "pdf" },
+    PENDING_APPROVAL: { label: "Approve + PDF", action: "approve" },
     PDF_GENERATED: { label: "Mark Released", action: "release" },
   };
 

@@ -247,9 +247,10 @@ async function handleIncomingMessage(senderId, rawText, quickReplyPayload, baran
   }
 
   if (session.step) {
-    applySessionInput(session, text, payload);
+    const inputError = applySessionInput(session, text, payload);
     session.touchedAt = Date.now();
     userSessions.set(senderId, session);
+    if (inputError) return asText(inputError);
     return promptForStep(session.step, session.draft, session.lang);
   }
 
@@ -352,9 +353,13 @@ async function handleAdminCommand(_senderId, commandText, barangayId = "") {
   if (!request) return asText("Reference not found.");
 
   if (command === "/approve") {
-    await updateRequestStatus(request, "APPROVED", "Approved by staff");
-    await notifyCustomer(request.senderId, `Your request ${request.id} is APPROVED.`, request.barangayId);
-    return makeApproveResultQuickReply(request);
+    await approveAndGeneratePdf(request, "staff");
+    await notifyCustomer(
+      request.senderId,
+      `Your request ${request.id} is approved and the document PDF is ready.\nPDF: ${request.pdfUrl}`,
+      request.barangayId
+    );
+    return makePdfResultQuickReply(request);
   }
 
   if (command === "/pdf") {
@@ -455,6 +460,12 @@ async function updateRequestStatus(request, newStatus, note) {
   await persistRequests();
 }
 
+async function approveAndGeneratePdf(request, actorLabel) {
+  await updateRequestStatus(request, "APPROVED", `Approved by ${actorLabel}`);
+  request.pdfUrl = await generateDocumentPdf(request);
+  await updateRequestStatus(request, "PDF_GENERATED", `PDF generated automatically after approval by ${actorLabel}`);
+}
+
 function formatCustomerStatus(request) {
   const pdfLine = request.pdfUrl ? `\nPDF: ${request.pdfUrl}` : "";
   return (
@@ -539,24 +550,15 @@ function makePendingTemplate(request) {
   return asQuickReply(
     `${request.id}\n${request.fullName}\n${request.documentType}\n${request.status}`,
     [
-      { title: "Approve", payload: `STAFF_APPROVE` },
-      { title: "Generate PDF", payload: "STAFF_PDF" },
+      { title: "Approve + PDF", payload: `STAFF_APPROVE` },
       { title: "Release", payload: "STAFF_RELEASE" },
       { title: "Menu", payload: "STAFF_MENU" },
     ]
   );
 }
 
-function makeApproveResultQuickReply(request) {
-  return asQuickReply(`${request.id} approved. Choose next action.`, [
-    { title: "Generate PDF", payload: "STAFF_PDF" },
-    { title: "Release", payload: "STAFF_RELEASE" },
-    { title: "Menu", payload: "STAFF_MENU" },
-  ]);
-}
-
 function makePdfResultQuickReply(request) {
-  return asQuickReply(`${request.id} PDF generated. Choose next action.`, [
+  return asQuickReply(`${request.id} approved and PDF generated. Choose next action.`, [
     { title: "Release", payload: "STAFF_RELEASE" },
     { title: "View Pending", payload: "STAFF_PENDING" },
     { title: "Menu", payload: "STAFF_MENU" },
@@ -588,8 +590,7 @@ function asQuickReply(text, options) {
 function makeStaffMenuQuickReply() {
   return asQuickReply("Staff Menu", [
     { title: "View Pending", payload: "STAFF_PENDING" },
-    { title: "Approve", payload: "STAFF_APPROVE" },
-    { title: "Generate PDF", payload: "STAFF_PDF" },
+    { title: "Approve + PDF", payload: "STAFF_APPROVE" },
     { title: "Release", payload: "STAFF_RELEASE" },
   ]);
 }
@@ -677,8 +678,8 @@ function promptForStep(step, draft = {}, lang = "en") {
     return asQuickReply(
       `${localize(lang, "confirm_header")}\n` +
         `Document: ${draft.documentType}\n` +
-        `Full Name: ${toTitleCase(draft.fullName || "")}\n` +
-        `Address: ${toTitleCase(draft.address || "")}\n` +
+        `Full Name: ${formatFullName(draft.fullName || "")}\n` +
+        `Address: ${normalizeAddress(draft.address || "", barangays.get(draft.barangayId || "default"))}\n` +
         `Purpose: ${sentenceCase(draft.purpose || "")}\n` +
         `Pickup Date: ${formatPickupDateForDisplay(draft.pickupDate)}\n` +
         `Service Fee: PHP ${SERVICE_FEE_PHP}`,
@@ -701,19 +702,24 @@ function applySessionInput(session, text, payload) {
   }
 
   if (session.step === "awaiting_full_name") {
-    session.draft.fullName = text;
+    const fullName = formatFullName(text);
+    if (!isCompleteFullName(fullName)) {
+      session.draft.fullName = fullName;
+      return localize(session.lang, "name_incomplete");
+    }
+    session.draft.fullName = fullName;
     session.step = "awaiting_address";
     return;
   }
 
   if (session.step === "awaiting_address") {
-    session.draft.address = text;
+    session.draft.address = normalizeAddress(text, barangays.get(session.draft.barangayId || "default"));
     session.step = "awaiting_purpose";
     return;
   }
 
   if (session.step === "awaiting_purpose") {
-    session.draft.purpose = text;
+    session.draft.purpose = sentenceCase(text);
     session.step = "awaiting_pickup_date";
     return;
   }
@@ -781,6 +787,7 @@ function localize(lang, key, refId = "") {
       ask_doc: "What document do you need?",
       ask_name: "Please provide your full name.",
       ask_address: "Please provide your complete address.",
+      name_incomplete: "Your name does not look complete yet. Please send your full first and last name, for example: Juan Dela Cruz.",
       ask_purpose: "Please provide the purpose of request.",
       ask_date: "Preferred pickup date?",
       confirm_header: "Please confirm your request:",
@@ -804,6 +811,7 @@ function localize(lang, key, refId = "") {
       ask_doc: "Anong dokumento ang kailangan mo?",
       ask_name: "Pakibigay ang buong pangalan mo.",
       ask_address: "Pakibigay ang kumpletong address mo.",
+      name_incomplete: "Mukhang hindi pa kumpleto ang pangalan. Pakibigay ang buong first name at last name, halimbawa: Juan Dela Cruz.",
       ask_purpose: "Ano ang layunin ng request?",
       ask_date: "Kailan ang preferred pickup date?",
       confirm_header: "Paki-confirm ang iyong request:",
@@ -827,6 +835,7 @@ function localize(lang, key, refId = "") {
       ask_doc: "Unsa nga dokumento ang imong kinahanglan?",
       ask_name: "Palihug ihatag ang imong tibuok ngalan.",
       ask_address: "Palihug ihatag ang imong kumpletong address.",
+      name_incomplete: "Murag dili pa kompleto ang ngalan. Palihug ihatag ang tibuok first name ug last name, pananglitan: Juan Dela Cruz.",
       ask_purpose: "Unsa ang tuyo sa request?",
       ask_date: "Kanus-a ang preferred pickup date?",
       confirm_header: "Palihug i-confirm ang imong request:",
@@ -851,10 +860,11 @@ function localize(lang, key, refId = "") {
 }
 
 async function normalizeRequestDraft(draft) {
+  const barangay = barangays.get(draft.barangayId || "default");
   const fallback = {
     ...draft,
-    fullName: toTitleCase(draft.fullName || ""),
-    address: toTitleCase(draft.address || ""),
+    fullName: formatFullName(draft.fullName || ""),
+    address: normalizeAddress(draft.address || "", barangay),
     purpose: sentenceCase(draft.purpose || ""),
     pickupDate: normalizePickupDate(draft.pickupDate || ""),
   };
@@ -890,8 +900,8 @@ async function normalizeRequestDraft(draft) {
 
     return {
       ...draft,
-      fullName: parsed.fullName || fallback.fullName,
-      address: parsed.address || fallback.address,
+      fullName: formatFullName(parsed.fullName || fallback.fullName),
+      address: normalizeAddress(parsed.address || fallback.address, barangay),
       purpose: parsed.purpose || fallback.purpose,
       pickupDate: parsed.pickupDate || fallback.pickupDate,
     };
@@ -905,6 +915,55 @@ function toTitleCase(value) {
     .toLowerCase()
     .replace(/\b\w/g, (char) => char.toUpperCase())
     .trim();
+}
+
+function formatFullName(value) {
+  return toTitleCase(value)
+    .replace(/\s+/g, " ")
+    .replace(/\b(Jr|Sr|Ii|Iii|Iv)\b\.?/g, (suffix) => suffix.toUpperCase().replace(/\.$/, "") + ".");
+}
+
+function isCompleteFullName(value) {
+  const suffixes = new Set(["jr", "sr", "ii", "iii", "iv"]);
+  const nameParts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.replace(/[^a-z-]/gi, "").toLowerCase())
+    .filter((part) => part && !suffixes.has(part));
+  return nameParts.length >= 2 && nameParts.every((part) => part.length >= 2);
+}
+
+function normalizeProvinceName(value) {
+  const cleaned = String(value || "").trim().replace(/\.+$/, "");
+  if (/^(mis\.?\s*or|misamis\s*or\.?|mis\s*oriental)$/i.test(cleaned)) return "Misamis Oriental";
+  return toTitleCase(cleaned || "Misamis Oriental");
+}
+
+function stripAdministrativeUnit(value, patterns) {
+  let result = String(value || "").trim();
+  for (const pattern of patterns) {
+    result = result.replace(pattern, "").trim();
+  }
+  return result.replace(/^,+|,+$/g, "").trim();
+}
+
+function normalizeAddress(value, barangay = null) {
+  const b = barangay || barangays.get("default") || {};
+  const barangayName = stripAdministrativeUnit(b.name || "Ane-i", [/^barangay\s+/i]);
+  const municipality = stripAdministrativeUnit(b.municipality || "Claveria", [/^municipality\s+of\s+/i]);
+  const province = normalizeProvinceName(stripAdministrativeUnit(b.province || "Misamis Oriental", [/^province\s+of\s+/i]));
+  const rawParts = String(value || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const lowerBarangay = barangayName.toLowerCase();
+  const lowerMunicipality = municipality.toLowerCase();
+  const zoneParts = rawParts.filter((part) => {
+    const normalized = stripAdministrativeUnit(part, [/^barangay\s+/i, /^municipality\s+of\s+/i, /^province\s+of\s+/i]).toLowerCase().replace(/\.+$/, "");
+    return normalized !== lowerBarangay && normalized !== lowerMunicipality && normalizeProvinceName(normalized).toLowerCase() !== province.toLowerCase();
+  });
+  const zoneOrSitio = toTitleCase(zoneParts.join(", ") || String(value || "").trim() || "Resident Address");
+  return `${zoneOrSitio}, ${barangayName}, ${municipality}, ${province}`;
 }
 
 function sentenceCase(value) {
@@ -940,11 +999,11 @@ function isValidPickupDate(value) {
 
 function validateDraft(draft) {
   if (!draft.documentType) return "Document type is required. Please go back and select a document.";
-  if (!draft.fullName || draft.fullName.trim().length < 5) {
-    return "Please provide a valid full name (at least 5 characters).";
+  if (!isCompleteFullName(draft.fullName)) {
+    return "Your name does not look complete yet. Please send your full first and last name, for example: Juan Dela Cruz.";
   }
   if (!draft.address || draft.address.trim().length < 8) {
-    return "Please provide a complete address (at least 8 characters).";
+    return "Please provide your zone or sitio, for example: Zone-3 or Sitio Proper.";
   }
   if (!draft.purpose || draft.purpose.trim().length < 3) {
     return "Please provide a valid purpose.";
@@ -958,7 +1017,7 @@ function validateDraft(draft) {
 function resolveStepFromValidationError(message) {
   const m = String(message || "").toLowerCase();
   if (m.includes("document")) return "awaiting_document";
-  if (m.includes("full name")) return "awaiting_full_name";
+  if (m.includes("name")) return "awaiting_full_name";
   if (m.includes("address")) return "awaiting_address";
   if (m.includes("purpose")) return "awaiting_purpose";
   if (m.includes("pickup date")) return "awaiting_pickup_date";
@@ -1302,7 +1361,7 @@ async function generateDocumentPdf(request) {
       province,
     });
 
-    const template = buildDocumentTemplate(request, issueDate, barangayName, municipality, province);
+    const template = buildDocumentTemplate(request, issueDate, normalizeAddress(request.address || "", barangay));
     doc.moveDown(1.4);
     doc.font("Helvetica-Bold").fontSize(16).text(template.title, { align: "center", underline: false });
     doc.moveDown(0.3);
@@ -1404,9 +1463,9 @@ function drawDocumentFooter(doc, request) {
   doc.restore();
 }
 
-function buildDocumentTemplate(request, issueDate, barangayName, municipality, province) {
-  const fullName = toTitleCase(request.fullName || "");
-  const address = toTitleCase(request.address || "");
+function buildDocumentTemplate(request, issueDate, fullAddress) {
+  const fullName = formatFullName(request.fullName || "");
+  const address = fullAddress;
   const purpose = sentenceCase(request.purpose || "legal purpose");
   const type = String(request.documentType || "").toLowerCase();
 
@@ -1415,7 +1474,7 @@ function buildDocumentTemplate(request, issueDate, barangayName, municipality, p
       title: "BARANGAY CERTIFICATE OF INDIGENCY",
       body:
         `TO WHOM IT MAY CONCERN:\n\n` +
-        `This is to certify that ${fullName}, of legal age, Filipino, and a bona fide resident of ${address}, ${barangayName}, ${municipality}, ${province}, is known in this barangay as an indigent resident based on records and community verification.\n\n` +
+        `This is to certify that ${fullName}, of legal age, Filipino, and a bona fide resident of ${address}, is known in this barangay as an indigent resident based on records and community verification.\n\n` +
         `This certification is issued upon the request of the above-named person for ${purpose} and for whatever legal purpose it may serve.`,
     };
   }
@@ -1425,7 +1484,7 @@ function buildDocumentTemplate(request, issueDate, barangayName, municipality, p
       title: "BARANGAY CERTIFICATE OF RESIDENCY",
       body:
         `TO WHOM IT MAY CONCERN:\n\n` +
-        `This is to certify that ${fullName}, of legal age, Filipino, is a bona fide resident of ${address}, ${barangayName}, ${municipality}, ${province}.\n\n` +
+        `This is to certify that ${fullName}, of legal age, Filipino, is a bona fide resident of ${address}.\n\n` +
         `This certification is issued upon the request of the above-named person for ${purpose} and for whatever legal purpose it may serve.`,
     };
   }
@@ -1435,7 +1494,7 @@ function buildDocumentTemplate(request, issueDate, barangayName, municipality, p
       title: "BARANGAY CERTIFICATION",
       body:
         `TO WHOM IT MAY CONCERN:\n\n` +
-        `This is to certify that ${fullName}, of legal age, Filipino, is a bona fide resident of ${address}, ${barangayName}, ${municipality}, ${province}.\n\n` +
+        `This is to certify that ${fullName}, of legal age, Filipino, is a bona fide resident of ${address}.\n\n` +
         `This certification is issued for ${purpose} and for whatever legal purpose it may serve.`,
     };
   }
@@ -1444,7 +1503,7 @@ function buildDocumentTemplate(request, issueDate, barangayName, municipality, p
     title: "BARANGAY CLEARANCE",
     body:
       `TO WHOM IT MAY CONCERN:\n\n` +
-      `This is to certify that ${fullName}, of legal age, Filipino, and a bona fide resident of ${address}, ${barangayName}, ${municipality}, ${province}, is known to be a person of good moral character and has no derogatory record or pending complaint on file in this barangay as of ${issueDate}.\n\n` +
+      `This is to certify that ${fullName}, of legal age, Filipino, and a bona fide resident of ${address}, is known to be a person of good moral character and has no derogatory record or pending complaint on file in this barangay as of ${issueDate}.\n\n` +
       `This clearance is issued upon request for ${purpose} and for whatever legal purpose it may serve.`,
   };
 }
@@ -1512,9 +1571,14 @@ app.post("/api/admin/requests/:id/approve", requireStaffApiKey, async (req, res)
   const request = requests.get(String(req.params.id || "").toUpperCase());
   if (!request) return res.status(404).json({ error: "Request not found." });
 
-  await updateRequestStatus(request, "APPROVED", "Approved from dashboard");
-  await notifyCustomer(request.senderId, `Your request ${request.id} is APPROVED.`, request.barangayId);
+  await approveAndGeneratePdf(request, "dashboard");
+  await notifyCustomer(
+    request.senderId,
+    `Your request ${request.id} is approved and the document PDF is ready.\nPDF: ${request.pdfUrl}`,
+    request.barangayId
+  );
   await writeAuditLog("APPROVE", "dashboard_admin", request);
+  await writeAuditLog("GENERATE_PDF", "dashboard_admin", request);
   return res.json({ ok: true, data: request });
 });
 
